@@ -65,20 +65,25 @@ async def show_profile(message: types.Message):
             exp = row[0]
             lvl = calculate_level(exp)
             title = get_tag_title(lvl)
-            next_lvl_exp = exp_for_next_level(lvl)
+            
+            exp_for_current = exp_for_next_level(lvl)
+            exp_for_next = exp_for_next_level(lvl + 1)
+            needed_for_lvl = exp_for_next - exp_for_current
 
-            prev_lvl_exp = exp_for_next_level(lvl - 1) if lvl > 1 else 0
-            needed_for_lvl = next_lvl_exp - prev_lvl_exp
-            current_progress = exp - prev_lvl_exp
-            filled_units = int((current_progress / needed_for_lvl) * 10) if needed_for_lvl > 0 else 0
+            if needed_for_lvl > 0:
+                progress = (exp - exp_for_current) / needed_for_lvl
+                progress = max(0.0, min(1.0, progress))  # Ограничиваем от 0 до 1
+                filled_units = int(progress * 20)
+            else:
+                filled_units = 10
 
-            progress_bar = "▓" * filled_units + "░" * (10 - filled_units)
-            diff = next_lvl_exp - exp
+            diff = exp_for_next - exp
+            progress_bar = "▓" * filled_units + "░" * (20 - filled_units)
 
             text = (
                 f"👤 <b>Герой:</b> {message.from_user.first_name}\n"
                 f"🎖 <b>Титул:</b> <i>{title}</i>\n"
-                f"📊 <b>Уровень:</b> <code>{lvl}</code>\n"
+                # f"📊 <b>Уровень:</b> <code>{lvl}</code>\n"
                 f"✨ <b>Опыт:</b> <code>{exp} EXP</code>\n"
                 f"📈 <b>До Level Up:</b> <code>{max(0, diff)} EXP</code>\n\n"
                 f"💪 <code>{progress_bar}</code>\n\n"
