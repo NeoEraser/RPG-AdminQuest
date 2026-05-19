@@ -1,0 +1,8 @@
+.env
+gamebot_rpg.db
+__pycache__
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.DS_Store
