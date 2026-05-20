@@ -13,7 +13,7 @@ async def divine_smite(message: types.Message):
         parts = message.text.split(maxsplit=3)
         target_id, penalty = int(parts[1]), int(parts[2])
         reason = parts[3] if len(parts) > 3 else "Неисповедимы пути Тимлида."
-        new_exp = await update_exp(target_id, -penalty, reason="smite")
+        await update_exp(target_id, -penalty, reason="smite")
         await message.answer(f"⚡️ <b>ГНЕВ ТИМЛИДА</b> ⚡️\nГерой <code>{target_id}</code> оштрафован: <b>-{penalty} EXP</b>\n<b>Причина:</b> <i>{reason}</i>")
     except: 
         await message.answer("Формат: /smite ID 20 Уронил прод")

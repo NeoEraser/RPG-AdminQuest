@@ -75,7 +75,7 @@ async def show_profile(message: types.Message):
                 progress = max(0.0, min(1.0, progress))  # Ограничиваем от 0 до 1
                 filled_units = int(progress * 20)
             else:
-                filled_units = 10
+                filled_units = 20
 
             diff = exp_for_next - exp
             progress_bar = "▓" * filled_units + "░" * (20 - filled_units)
@@ -93,7 +93,12 @@ async def show_profile(message: types.Message):
             daily_changes = await get_month_activity(message.from_user.id, today.year, today.month)
             calendar_view = build_activity_calendar(daily_changes, today.year, today.month)
 
-            text += f"📅 <b>АКТИВНОСТЬ {today.strftime('%B %Y').capitalize()}</b>\n"
+            # Заголовок с месяцем и годом
+            month_names = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+                        'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+            title = f'{month_names[today.month]} {today.year}'
+
+            text += f"📅 <b>АКТИВНОСТЬ {title}</b>\n"
             text += f"<code>{calendar_view}</code>"
 
             await message.reply(text)
