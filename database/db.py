@@ -7,8 +7,9 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 name TEXT,
+                username TEXT,
                 exp INTEGER DEFAULT 0,
-                monthly_exp INTEGER DEFAULT 0, -- Новый столбец
+                monthly_exp INTEGER DEFAULT 0,
                 plan_submitted INTEGER DEFAULT 0,
                 last_active DATE DEFAULT CURRENT_DATE
             )
@@ -106,6 +107,12 @@ async def update_activity(user_id: int):
     """Обновляет дату последней активности пользователя"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute('UPDATE users SET last_active = CURRENT_DATE WHERE user_id = ?', (user_id,))
+        await db.commit()
+
+async def update_username(user_id: int, username: str):
+    """Обновляет username пользователя"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (username, user_id))
         await db.commit()
 
 # Новая функция для сохранения таймаута

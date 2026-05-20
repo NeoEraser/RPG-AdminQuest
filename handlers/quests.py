@@ -201,6 +201,70 @@ async def set_daily_plan(message: types.Message):
         
         
         
+@router.message(F.reply_to_message, F.text.lower().startswith("передать"))
+async def transfer_quest(message: types.Message):
+    reply_msg = message.reply_to_message
+    user_id = message.from_user.id
+
+    # Извлекаем ник целевого игрока из команды
+    transfer_text = message.text[8:].strip()  # Убираем "передать"
+
+    # Если начинается с @, убираем его
+    if transfer_text.startswith("@"):
+        target_username = transfer_text[1:].strip()
+    else:
+        target_username = transfer_text.strip()
+
+    if not target_username:
+        return await message.reply("❌ Укажите ник игрока: передать @nickname")
+
+    # Ищем пользователя в БД по username
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT user_id, name FROM users WHERE LOWER(username) = LOWER(?)', (target_username,)) as cursor:
+            result = await cursor.fetchone()
+            if not result:
+                return await message.reply(f"❌ Игрок <b>@{target_username}</b> не найден в системе.\n\nУбедитесь, что он вызвал /profile хотя бы один раз.")
+
+            target_user_id, target_user_name = result
+
+        # Получаем информацию о квесте
+        async with db.execute('SELECT task_id, worker_id, status, description, reward FROM tasks WHERE bot_msg_id = ?', (reply_msg.message_id,)) as cursor:
+            task = await cursor.fetchone()
+            if not task:
+                return
+
+            task_id, worker_id, status, description, reward = task
+
+            # Проверяем, что текущий пользователь является исполнителем квеста
+            if worker_id != user_id:
+                return await message.reply("🧙‍♂️ Это не твой квест, ты не можешь его передать!")
+
+            # Обновляем исполнителя квеста
+            await db.execute(
+                'UPDATE tasks SET worker_id = ? WHERE task_id = ?',
+                (target_user_id, task_id)
+            )
+            await db.commit()
+
+            # Сохраняем действие в переписку
+            await save_quest_message(
+                task_id=task_id,
+                user_id=user_id,
+                user_name=message.from_user.first_name,
+                message_text=f"Передал квест игроку {target_user_name}",
+                is_reply_to_quest=True
+            )
+
+    await message.answer(
+        f"✅ <b>КВЕСТ ПЕРЕДАН</b>\n\n"
+        f"От: {message.from_user.first_name}\n"
+        f"Кому: <b>{target_user_name}</b>\n\n"
+        f"Квест #{task_id} теперь в руках нового исполнителя."
+    )
+
+    # Обновляем исходное сообщение квеста
+    await reply_msg.edit_text(f"{reply_msg.text}\n\n👤 <b>Квест передан:</b> {target_user_name}", reply_markup=None)
+
 @router.message(F.reply_to_message)
 async def finish_quest(message: types.Message):
     reply_msg = message.reply_to_message
@@ -209,9 +273,9 @@ async def finish_quest(message: types.Message):
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute('SELECT task_id, worker_id, status, description, reward FROM tasks WHERE bot_msg_id = ?', (reply_msg.message_id,)) as cursor:
             task = await cursor.fetchone()
-            if not task: 
+            if not task:
                 return
-            
+
             task_id, worker_id, status, description, reward = task
 
             # Сохраняем отчет в переписку

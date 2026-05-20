@@ -3,7 +3,7 @@ from aiogram.filters import Command
 import aiosqlite
 from config import DB_NAME
 from services.rpg import calculate_level, exp_for_next_level, get_tag_title
-from database.db import get_month_activity
+from database.db import get_month_activity, update_username
 from datetime import datetime
 import calendar
 
@@ -62,10 +62,14 @@ async def show_profile(message: types.Message):
             row = await cursor.fetchone()
             if not row: return await message.reply("Сначала напиши /start")
 
+            # Сохраняем username если есть
+            if message.from_user.username:
+                await update_username(message.from_user.id, message.from_user.username)
+
             exp = row[0]
             lvl = calculate_level(exp)
             title = get_tag_title(lvl)
-            
+
             exp_for_current = exp_for_next_level(lvl)
             exp_for_next = exp_for_next_level(lvl + 1)
             needed_for_lvl = exp_for_next - exp_for_current
@@ -206,7 +210,9 @@ async def cmd_help(message: types.Message):
         "   → Срочный инцидент, время: <b>1 час</b>, награда <b>+15 EXP</b>\n"
         "⚔️ <b>Кнопка «Взять квест»</b> — Забронировать квест на <b>4 часа</b>\n"
         "✅ <b>Reply на квест: Готово [отчет]</b> — Сдать выполненный квест\n"
-        "   → Короткий отчет: +1 EXP | Развернутый отчет: +5 EXP\n\n"
+        "   → Короткий отчет: +1 EXP | Развернутый отчет: +5 EXP\n"
+        "↔️ <b>Reply на квест: передать @ник</b> — Передать квест другому игроку\n"
+        "   → Только исполнитель может передать свой квест\n\n"
 
         "<b>📋 СИСТЕМА КВЕСТОВ:</b>\n"
         "🟢 <b>OPEN</b> — Свободный квест, ждет исполнителя\n"
