@@ -183,7 +183,7 @@ async def finish_quest(message: types.Message):
 
     await reply_msg.edit_text(f"{reply_msg.text}\n\n<b>✅ Квест сдан</b>", reply_markup=None)
 
-@router.message(F.text.lower().startswith("план на завтра"))
+@router.message(F.text.lower().startswith("план на завтра") | F.text.lower().startswith("планы на завтра"))
 async def set_daily_plan(message: types.Message):
     current_hour = datetime.now().hour
     

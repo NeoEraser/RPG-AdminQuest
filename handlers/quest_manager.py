@@ -67,9 +67,12 @@ async def show_quests_page(message: types.Message, quests: list, page: int):
         
         short_desc = description[:40] + "..." if len(description) > 40 else description
         
-        dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S.%f")
-        
-        text += f"{emoji} <b>Квест #{task_id} {dt.strftime("%d.%m.%y %H:%M")} {worker_name if worker_name else ''}</b>\n"
+        if start_time:
+            dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S.%f")
+            date =dt.strftime("%d.%m.%y %H:%M")
+        else:
+            date = ''
+        text += f"{emoji} <b>Квест #{task_id} {date} {worker_name if worker_name else ''}</b>\n"
         text += f"   📝 {short_desc}\n"
         text += f"   📊 {status_text} | 💬 {messages_count} сообщ.\n"
         
