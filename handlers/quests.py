@@ -70,10 +70,10 @@ async def create_task(message: types.Message):
 @router.callback_query(F.data == "take_quest")
 async def process_take_quest(callback: types.CallbackQuery):
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT exp, agreed_to_tos FROM users WHERE user_id = ?', (message.from_user.id,)) as cursor:
+        async with db.execute('SELECT exp, agreed_to_tos FROM users WHERE user_id = ?', (callback.from_user.id,)) as cursor:
             row = await cursor.fetchone()
-            if not row: return await message.reply("Сначала напиши /start")
-            if row[1] == 0: return await message.reply("Сначала согласись с условиями через /start")
+            if not row: return await callback.reply("Сначала напиши /start")
+            if row[1] == 0: return await callback.reply("Сначала согласись с условиями через /start")
             
             user_id = callback.from_user.id
             msg_id = callback.message.message_id
