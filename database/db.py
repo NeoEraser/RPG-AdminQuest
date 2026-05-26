@@ -23,8 +23,9 @@ async def init_db():
                 worker_id INTEGER DEFAULT NULL,
                 reward INTEGER DEFAULT NULL,
                 time INTEGER DEFAULT NULL,
-                status TEXT DEFAULT 'open', 
-                start_time DATETIME
+                status TEXT DEFAULT 'open',
+                start_time DATETIME,
+                postponements_count INTEGER DEFAULT 0
             )
         ''')
         await db.execute('''
@@ -137,7 +138,7 @@ async def get_all_timeouts() -> list:
     """Возвращает все активные таймауты"""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute('''
-            SELECT t.task_id, t.bot_msg_id, t.worker_id, t.timeout_time, 
+            SELECT t.task_id, t.bot_msg_id, t.worker_id, t.timeout_time,
                    tasks.chat_id, tasks.description
             FROM task_timeouts t
             JOIN tasks ON t.task_id = tasks.task_id
@@ -145,6 +146,26 @@ async def get_all_timeouts() -> list:
             ORDER BY t.timeout_time ASC
         ''') as cursor:
             return await cursor.fetchall()
+
+# Функция для обновления таймаута отсрочки
+async def update_timeout(bot_msg_id: int, new_timeout_time: str):
+    """Обновляет время таймаута для отсрочки"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            'UPDATE task_timeouts SET timeout_time = ? WHERE bot_msg_id = ?',
+            (new_timeout_time, bot_msg_id)
+        )
+        await db.commit()
+
+# Функция для увеличения счетчика отсрочек
+async def increment_postponements(task_id: int):
+    """Увеличивает счетчик использованных отсрочек"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            'UPDATE tasks SET postponements_count = postponements_count + 1 WHERE task_id = ?',
+            (task_id,)
+        )
+        await db.commit()
 
 
 # Функция для очистки просроченных таймаутов

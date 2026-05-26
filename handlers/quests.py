@@ -3,7 +3,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import aiosqlite
 from datetime import datetime, timedelta
 from config import DB_NAME
-from database.db import update_exp, update_activity, save_timeout, remove_timeout, save_quest_message
+from database.db import update_exp, update_activity, save_timeout, remove_timeout, save_quest_message, increment_postponements, update_timeout
 from services.scheduler import scheduler, quest_timeout_check
 from services.api import update_telegram_tag
 from services.rpg import calculate_level, get_tag_title
@@ -116,11 +116,79 @@ async def process_take_quest(callback: types.CallbackQuery):
 
     await update_activity(user_id) # Сброс АФК таймера
 
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⏸ Отсрочка", callback_data=f"postpone_quest")
+    ]])
+
     await callback.message.edit_text(
-        f"{callback.message.text}\n\n👣 <b>Взял на себя:</b> {callback.from_user.first_name}\n⏳ Время пошло!\n\nУдачи, герой!", reply_markup=None
+        f"{callback.message.text}\n\n👣 <b>Взял на себя:</b> {callback.from_user.first_name}\n⏳ Время пошло!\n\nУдачи, герой!", reply_markup=kb
     )
 
-@router.message(F.reply_to_message, F.text.lower().startswith("готово"))
+@router.callback_query(F.data == "postpone_quest")
+async def process_postpone_quest(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    msg_id = callback.message.message_id
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT task_id, worker_id, status, time FROM tasks WHERE bot_msg_id = ?', (msg_id,)) as cursor:
+            task = await cursor.fetchone()
+
+            if not task:
+                return await callback.answer("Квест не найден!", show_alert=True)
+
+            task_id, worker_id, status, time_hours = task
+
+            if status != 'in_progress':
+                return await callback.answer("Квест не в работе!", show_alert=True)
+
+            if worker_id != user_id:
+                return await callback.answer("Это не твой квест!", show_alert=True)
+
+            # Удаляем старый таймер
+            try:
+                scheduler.remove_job(f"quest_timeout_{msg_id}")
+            except:
+                pass
+
+            # Новое время таймаута (добавляем 4 часа)
+            new_timeout_time = datetime.now() + timedelta(hours=4)
+
+            # Обновляем таймер в БД
+            await update_timeout(msg_id, new_timeout_time.isoformat())
+
+            # Добавляем новую задачу в планировщик
+            scheduler.add_job(
+                quest_timeout_check,
+                'date',
+                run_date=new_timeout_time,
+                args=[callback.bot, task_id, msg_id, user_id],
+                id=f"quest_timeout_{msg_id}",
+                replace_existing=True
+            )
+
+            # Увеличиваем счетчик отсрочек
+            await increment_postponements(task_id)
+
+    # Сохраняем сообщение об отсрочке
+    await save_quest_message(
+        task_id=task_id,
+        user_id=user_id,
+        user_name=callback.from_user.first_name,
+        message_text=f"Взял отсрочку (+4 часа)",
+        is_reply_to_quest=True
+    )
+
+    await callback.answer("⏸ Отсрочка активирована! +4 часа к времени", show_alert=False)
+
+    # Обновляем сообщение с информацией об отсрочке
+    await callback.message.edit_text(
+        f"{callback.message.text}\n\n✋ <b>Отсрочка активирована:</b> {callback.from_user.first_name}\n⏳ Добавлено 4 часа",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⏸ Отсрочка", callback_data="postpone_quest")
+        ]])
+    )
+
+    await update_activity(user_id)
 async def finish_quest(message: types.Message):
     reply_msg = message.reply_to_message
     user_id = message.from_user.id

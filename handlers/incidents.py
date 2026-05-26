@@ -46,6 +46,15 @@ async def create_incident(message: types.Message):
             message_text=f"Создал(а) критический инцидент: {task_text}",
             is_reply_to_quest=True
         )
+        
+    # Закрепляем сообщение с квестом (тихое закрепление)
+    try:
+        await message.chat.pin_message(
+            message_id=sent_msg.message_id,
+            disable_notification=True  # Закрепление без уведомления
+        )
+    except Exception as e:
+        print(f"Не удалось закрепить сообщение: {e}")
 
 @router.message(F.reply_to_message, F.text.lower().in_({"брак", "доделать", "переделать"}))
 async def reject_task(message: types.Message):
