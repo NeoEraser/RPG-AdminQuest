@@ -217,7 +217,7 @@ async def refresh_quests_list(callback: types.CallbackQuery):
     quests = await get_all_quests_with_stats(limit=50)
     user_pages[callback.from_user.id] = {'quests': quests, 'page': 1}
     await show_quests_page(callback.message, quests, 1)
-    await callback.answer("Список обновлен!")
+    await callback.answer("Список обновлен!", show_alert=True)
 
 
 @router.callback_query(F.data == "back_to_quests_list")

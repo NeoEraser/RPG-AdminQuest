@@ -11,7 +11,8 @@ async def init_db():
                 exp INTEGER DEFAULT 0,
                 monthly_exp INTEGER DEFAULT 0,
                 plan_submitted INTEGER DEFAULT 0,
-                last_active DATE DEFAULT CURRENT_DATE
+                last_active DATE DEFAULT CURRENT_DATE,
+                agreed_to_tos INTEGER DEFAULT 0
             )
         ''')
         await db.execute('''
@@ -78,6 +79,13 @@ async def init_db():
         await db.execute('CREATE INDEX IF NOT EXISTS idx_quest_messages_task_id ON quest_messages(task_id)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_quest_messages_created_at ON quest_messages(created_at)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_exp_history_user_date ON exp_history(user_id, change_date)')
+
+        # Миграция: добавляем колонку agreed_to_tos если её нет
+        try:
+            await db.execute('ALTER TABLE users ADD COLUMN agreed_to_tos INTEGER DEFAULT 0')
+        except:
+            pass
+
         await db.commit()
 
 async def update_exp(user_id: int, amount: int, reason: str = "quest"):
@@ -114,6 +122,19 @@ async def update_username(user_id: int, username: str):
     """Обновляет username пользователя"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute('UPDATE users SET username = ? WHERE user_id = ?', (username, user_id))
+        await db.commit()
+
+async def check_tos_agreed(user_id: int) -> bool:
+    """Проверяет, согласился ли пользователь с условиями"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('SELECT agreed_to_tos FROM users WHERE user_id = ?', (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] == 1 if row else False
+
+async def set_tos_agreed(user_id: int):
+    """Отмечает, что пользователь согласился с условиями"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('UPDATE users SET agreed_to_tos = 1 WHERE user_id = ?', (user_id,))
         await db.commit()
 
 # Новая функция для сохранения таймаута

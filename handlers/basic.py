@@ -1,9 +1,11 @@
 from aiogram import Router, F, types
 from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import aiosqlite
 from config import DB_NAME
 from services.rpg import calculate_level, exp_for_next_level, get_tag_title
-from database.db import get_month_activity, update_username
+from database.db import get_month_activity, update_username, check_tos_agreed, set_tos_agreed
+from tos import get_tos_text
 from datetime import datetime
 import calendar
 
@@ -45,22 +47,45 @@ def build_activity_calendar(daily_changes: dict, year: int, month: int) -> str:
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
+    user_id = message.from_user.id
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT user_id FROM users WHERE user_id = ?', (message.from_user.id,)) as cursor:
+        async with db.execute('SELECT user_id, agreed_to_tos FROM users WHERE user_id = ?', (user_id,)) as cursor:
             user = await cursor.fetchone()
+
         if not user:
-            await db.execute('INSERT INTO users (user_id, name) VALUES (?, ?)', (message.from_user.id, message.from_user.first_name))
+            await db.execute('INSERT INTO users (user_id, name) VALUES (?, ?)', (user_id, message.from_user.first_name))
             await db.commit()
-            await message.answer("🎮 Ты зарегистрирован в системе <b>RPG-админов</b>! Теперь ты можешь брать квесты.")
-        else:
+        elif user[1] == 1:
             await message.answer("⚔️ Ты уже в строю, боец!")
+            return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Принимаю условия", callback_data="accept_tos")],
+        [InlineKeyboardButton(text="❌ Отклоняю", callback_data="decline_tos")]
+    ])
+
+    await message.answer(get_tos_text(), reply_markup=kb)
+
+@router.callback_query(F.data == "accept_tos")
+async def accept_tos(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    await set_tos_agreed(user_id)
+
+    await callback.message.delete()
+    await callback.message.answer("✅ Спасибо! Ты согласился с условиями.\n\n🎮 Теперь ты можешь брать квесты. Используй /help для справки.")
+
+@router.callback_query(F.data == "decline_tos")
+async def decline_tos(callback: types.CallbackQuery):
+    await callback.message.delete()
+    await callback.message.answer("❌ Ты не согласился с условиями. Напиши /start, чтобы попробовать еще раз.")
 
 @router.message(Command("profile"))
 async def show_profile(message: types.Message):
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT exp FROM users WHERE user_id = ?', (message.from_user.id,)) as cursor:
+        async with db.execute('SELECT exp, agreed_to_tos FROM users WHERE user_id = ?', (message.from_user.id,)) as cursor:
             row = await cursor.fetchone()
             if not row: return await message.reply("Сначала напиши /start")
+            if row[1] == 0: return await message.reply("Сначала согласись с условиями через /start")
 
             # Сохраняем username если есть
             if message.from_user.username:
@@ -112,17 +137,17 @@ async def show_top(message: types.Message):
     async with aiosqlite.connect(DB_NAME) as db:
         # Получаем активных игроков (не в отпуске)
         today = datetime.now().date().isoformat()
-        
+
         # Топ за МЕСЯЦ (для премий)
         query_monthly = '''
             SELECT u.name, u.monthly_exp FROM users u
             LEFT JOIN vacations v ON u.user_id = v.user_id AND ? BETWEEN v.start_date AND v.end_date
-            WHERE v.user_id IS NULL
+            WHERE v.user_id IS NULL AND u.agreed_to_tos = 1
             ORDER BY u.monthly_exp DESC LIMIT 10
         '''
-        
+
         # Топ за ВСЁ ВРЕМЯ (для статуса)
-        query_all_time = 'SELECT name, exp FROM users ORDER BY exp DESC LIMIT 5'
+        query_all_time = 'SELECT name, exp FROM users WHERE agreed_to_tos = 1 ORDER BY exp DESC LIMIT 5'
 
         async with db.execute(query_monthly, (today,)) as c:
             monthly_top = await c.fetchall()
