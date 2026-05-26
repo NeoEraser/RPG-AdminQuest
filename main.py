@@ -40,7 +40,7 @@ async def main():
 
     # Запускаем задачи по расписанию (передаем бот инстанс)
     scheduler.add_job(daily_plan_check, 'cron', day_of_week='mon-thu', hour=18, minute=0, args=[bot])
-    scheduler.add_job(skill_decay_check, 'cron', hour=10, minute=0, args=[bot]) # Проверка на АФК каждое утро
+    scheduler.add_job(skill_decay_check, 'cron', day_of_week = 'tue-fri', hour=10, minute=0, args=[bot]) # Проверка на АФК каждое утро
     scheduler.add_job(reset_monthly_exp, 'cron', day=1, hour=0, minute=0, args=[bot])
     scheduler.add_job(monthly_results_check, 'cron', day='last', hour=12, minute=0, args=[bot, GROUP_ID])
     scheduler.start()

@@ -1,6 +1,6 @@
 import aiosqlite
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -87,30 +87,7 @@ async def reset_monthly_exp(bot: Bot):
     
     # Можно отправить уведомление в чат
     await bot.send_message(GROUP_ID, "📅 Новый месяц начался! Месячный опыт обнулен, гонка за премию стартует заново!")
-
-# async def quest_timeout_check(bot: Bot, bot_msg_id: int, user_id: int):
-#     async with aiosqlite.connect(DB_NAME) as db:
-#         async with db.execute('SELECT status, description, chat_id FROM tasks WHERE bot_msg_id = ? AND worker_id = ?', (bot_msg_id, user_id)) as cursor:
-#             row = await cursor.fetchone()
-#             if row and row[0] == 'in_progress':
-#                 status, description, chat_id = row
-#                 await update_exp(user_id, -2)
-#                 await db.execute('UPDATE tasks SET status = "open", worker_id = NULL WHERE bot_msg_id = ?', (bot_msg_id,))
-#                 await db.commit()
-                
-#                 try: await bot.send_message(user_id, "💀 <b>Время вышло!</b> Квест провален. Штраф: -2 EXP.\nЗадача снова доступна.")
-#                 except: pass
-
-#                 kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Взять квест", callback_data="take_quest")]])
-#                 try:
-#                     await bot.edit_message_text(
-#                         chat_id=chat_id, message_id=bot_msg_id,
-#                         text=f"📜 <b>НОВЫЙ КВЕСТ (ПОВТОРНО)</b>\n\n<b>Суть:</b> {description}\n\n⚠️ <i>Исполнитель не справился.</i>\n<b>Награда:</b> +5 EXP\n<b>Время:</b> 4 часа",
-#                         reply_markup=kb
-#                     )
-#                 except Exception as e: 
-#                     logging.error(f"Ошибка при обновлении сообщения: {e}")
-
+    
 async def quest_timeout_check(bot: Bot, task_id: int, bot_msg_id: int, user_id: int):
     """Проверка таймаута квеста"""
     async with aiosqlite.connect(DB_NAME) as db:
@@ -118,10 +95,10 @@ async def quest_timeout_check(bot: Bot, task_id: int, bot_msg_id: int, user_id: 
         await remove_timeout(bot_msg_id)
         
         # Проверяем статус задачи
-        async with db.execute('SELECT status, description, chat_id FROM tasks WHERE task_id = ?', (task_id,)) as cursor:
+        async with db.execute('SELECT status, description, chat_id, reward, time FROM tasks WHERE task_id = ?', (task_id,)) as cursor:
             row = await cursor.fetchone()
             if row and row[0] == 'in_progress':
-                status, description, chat_id = row
+                status, description, chat_id, reward, time = row
                 
                 # Штрафуем пользователя
                 await update_exp(user_id, -2, reason="timeout")
@@ -143,18 +120,33 @@ async def quest_timeout_check(bot: Bot, task_id: int, bot_msg_id: int, user_id: 
                     pass
 
                 # Обновляем сообщение в чате
-                kb = InlineKeyboardMarkup(
-                    inline_keyboard=[[InlineKeyboardButton(text="⚔️ Взять квест", callback_data=f"take_quest_{task_id}")]]
-                )
-                try:
-                    await bot.edit_message_text(
-                        chat_id=chat_id, 
-                        message_id=bot_msg_id,
-                        text=f"📜 <b>НОВЫЙ КВЕСТ (ПОВТОРНО)</b>\n\n<b>Суть:</b> {description}\n\n⚠️ <i>Исполнитель не справился.</i>\n<b>Награда:</b> +5 EXP\n<b>Время:</b> 4 часа",
-                        reply_markup=kb
+                if reward == 5: # Обычный квест
+                    kb = InlineKeyboardMarkup(
+                        inline_keyboard=[[InlineKeyboardButton(text="⚔️ Взять квест", callback_data=f"take_quest")]]
                     )
-                except Exception as e: 
-                    logging.error(f"Ошибка при обновлении сообщения: {e}")
+                    try:
+                        await bot.edit_message_text(
+                            chat_id=chat_id, 
+                            message_id=bot_msg_id,
+                            text=f"📜 <b>НОВЫЙ КВЕСТ (ПОВТОРНО)</b>\n\n<b>Суть:</b> {description}\n\n⚠️ <i>Исполнитель не справился.</i>\n<b>Награда:</b> +{reward} EXP\n<b>Время:</b> {time} часа",
+                            reply_markup=kb
+                        )
+                    except Exception as e: 
+                        logging.error(f"Ошибка при обновлении сообщения: {e}")
+                
+                elif reward == 15: # Инцидент
+                    kb = InlineKeyboardMarkup(
+                        inline_keyboard=[[InlineKeyboardButton(text="🔥 Спасти мир", callback_data=f"take_quest")]]
+                    )
+                    try:
+                        await bot.edit_message_text(
+                            chat_id=chat_id, 
+                            message_id=bot_msg_id,
+                            text=f"🚨 <b>КРИТИЧЕСКИЙ ИНЦИДЕНТ (ПОВТОРНО)</b> 🚨\n\n<b>Суть:</b> {description}\n\n⚠️ <i>Исполнитель не справился.</i>\n<b>Награда:</b> +{reward} EXP\n<b>Время:</b> {time} час",
+                            reply_markup=kb
+                        )
+                    except Exception as e: 
+                        logging.error(f"Ошибка при обновлении сообщения: {e}")
 
 async def restore_timeouts(bot: Bot):
     """Восстанавливает все таймауты после перезапуска"""
@@ -220,21 +212,38 @@ async def daily_plan_check(bot: Bot):
         await db.execute('UPDATE users SET plan_submitted = 0')
         await db.commit()
 
+def count_weekdays_since(last_date: date, today_date: date) -> int:
+    """Количество рабочих дней (пн-пт) от last_date до today_date (не включая last_date)"""
+    if last_date >= today_date:
+        return 0
+    days = 0
+    current = last_date + timedelta(days=1)
+    while current <= today_date:
+        if current.weekday() < 5:  # 0=пн, 4=пт, 5=сб, 6=вс
+            days += 1
+        current += timedelta(days=1)
+    return days
+
 async def skill_decay_check(bot: Bot):
     """Деградация навыков за АФК (2 дня)"""
     today = datetime.now().date()
-    threshold = today - timedelta(days=2)
     async with aiosqlite.connect(DB_NAME) as db:
         query = '''
             SELECT u.user_id FROM users u
             LEFT JOIN vacations v ON u.user_id = v.user_id AND ? BETWEEN v.start_date AND v.end_date
             WHERE u.last_active <= ? AND v.user_id IS NULL AND u.exp > 0
         '''
-        async with db.execute(query, (today.isoformat(), threshold.isoformat())) as cursor:
-            afk_users = await cursor.fetchall()
-        for (u_id,) in afk_users:
-            await update_exp(u_id, -2, reason="afk")
-            try: 
-                await bot.send_message(u_id, "🕸 <b>Скиллы ржавеют!</b>\nТы не брал квесты больше 2 дней. Штраф за АФК: <b>-2 EXP</b>.")
-            except: 
-                pass
+        async with db.execute(query, (today.isoformat(),)) as cursor:
+            users = await cursor.fetchall()
+        
+        for u_id, last_active_str in users:
+            last_active = datetime.fromisoformat(last_active_str).date()
+            # Считаем только рабочие дни
+            weekday_diff = count_weekdays_since(last_active, today)
+            
+            if weekday_diff >= 2:  # 2 и более рабочих дня без активности
+                await update_exp(u_id, -2, reason="afk")
+                try:
+                    await bot.send_message(u_id, "🕸 <b>Скиллы ржавеют!</b>\nТы не брал квесты больше 2 рабочих дней. Штраф за АФК: <b>-2 EXP</b>.")
+                except:
+                    pass
