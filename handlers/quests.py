@@ -144,14 +144,22 @@ async def process_postpone_quest(callback: types.CallbackQuery):
             if worker_id != user_id:
                 return await callback.answer("Это не твой квест!", show_alert=True)
 
-            # Удаляем старый таймер
+            # Вытягиваем текущее время таймера из БД
+            async with db.execute('SELECT timeout_time FROM task_timeouts WHERE bot_msg_id = ?', (msg_id,)) as cursor:
+                timeout_row = await cursor.fetchone()
+                if not timeout_row:
+                    return await callback.answer("Таймер не найден!", show_alert=True)
+
+                current_timeout = datetime.fromisoformat(timeout_row[0])
+
+            # Добавляем 2 часа к существующему времени таймера
+            new_timeout_time = current_timeout + timedelta(hours=4)
+
+            # Удаляем старый таймер из планировщика
             try:
                 scheduler.remove_job(f"quest_timeout_{msg_id}")
             except:
                 pass
-
-            # Новое время таймаута (добавляем 4 часа)
-            new_timeout_time = datetime.now() + timedelta(hours=4)
 
             # Обновляем таймер в БД
             await update_timeout(msg_id, new_timeout_time.isoformat())
