@@ -69,60 +69,66 @@ async def create_task(message: types.Message):
 
 @router.callback_query(F.data == "take_quest")
 async def process_take_quest(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    msg_id = callback.message.message_id
-
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT task_id, worker_id, status, time, description, chat_id FROM tasks WHERE bot_msg_id = ?', (msg_id,)) as cursor:
-            task = await cursor.fetchone()
-
-            if not task or task[2] != 'open': 
-                return await callback.answer("Уже занято!", show_alert=True)
-
-            task_id, worker_id, status, time_hours, description, chat_id = task
-
-            # Обновляем задачу
-            start_time = datetime.now()
-            timeout_time = start_time + timedelta(hours=time_hours)
+        async with db.execute('SELECT exp, agreed_to_tos FROM users WHERE user_id = ?', (message.from_user.id,)) as cursor:
+            row = await cursor.fetchone()
+            if not row: return await message.reply("Сначала напиши /start")
+            if row[1] == 0: return await message.reply("Сначала согласись с условиями через /start")
             
-            await db.execute(
-                'UPDATE tasks SET worker_id = ?, status = "in_progress", start_time = ? WHERE task_id = ?',
-                (user_id, start_time, task_id)
+            user_id = callback.from_user.id
+            msg_id = callback.message.message_id
+
+            async with aiosqlite.connect(DB_NAME) as db:
+                async with db.execute('SELECT task_id, worker_id, status, time, description, chat_id FROM tasks WHERE bot_msg_id = ?', (msg_id,)) as cursor:
+                    task = await cursor.fetchone()
+
+                    if not task or task[2] != 'open': 
+                        return await callback.answer("Уже занято!", show_alert=True)
+
+                    task_id, worker_id, status, time_hours, description, chat_id = task
+
+                    # Обновляем задачу
+                    start_time = datetime.now()
+                    timeout_time = start_time + timedelta(hours=time_hours)
+                    
+                    await db.execute(
+                        'UPDATE tasks SET worker_id = ?, status = "in_progress", start_time = ? WHERE task_id = ?',
+                        (user_id, start_time, task_id)
+                    )
+                    await db.commit()
+                    
+                    # Сохраняем таймаут в БД
+                    await save_timeout(task_id, msg_id, user_id, timeout_time.isoformat())
+                    
+                    
+            # Сохраняем сообщение о взятии квеста
+            await save_quest_message(
+                task_id=task_id,
+                user_id=user_id,
+                user_name=callback.from_user.first_name,
+                message_text=f"Взял(а) квест в работу",
+                is_reply_to_quest=True
             )
-            await db.commit()
-            
-            # Сохраняем таймаут в БД
-            await save_timeout(task_id, msg_id, user_id, timeout_time.isoformat())
-            
-            
-    # Сохраняем сообщение о взятии квеста
-    await save_quest_message(
-        task_id=task_id,
-        user_id=user_id,
-        user_name=callback.from_user.first_name,
-        message_text=f"Взял(а) квест в работу",
-        is_reply_to_quest=True
-    )
 
-        # Добавляем задачу в планировщик
-    scheduler.add_job(
-        quest_timeout_check,
-        'date',
-        run_date=timeout_time,
-        args=[callback.bot, task_id, msg_id, user_id],
-        id=f"quest_timeout_{msg_id}",
-        replace_existing=True
-    )
+                # Добавляем задачу в планировщик
+            scheduler.add_job(
+                quest_timeout_check,
+                'date',
+                run_date=timeout_time,
+                args=[callback.bot, task_id, msg_id, user_id],
+                id=f"quest_timeout_{msg_id}",
+                replace_existing=True
+            )
 
-    await update_activity(user_id) # Сброс АФК таймера
+            await update_activity(user_id) # Сброс АФК таймера
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="⏸ Отсрочка", callback_data=f"postpone_quest")
-    ]])
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⏸ Отсрочка", callback_data=f"postpone_quest")
+            ]])
 
-    await callback.message.edit_text(
-        f"{callback.message.text}\n\n👣 <b>Взял на себя:</b> {callback.from_user.first_name}\n⏳ Время пошло!\n\nУдачи, герой!", reply_markup=kb
-    )
+            await callback.message.edit_text(
+                f"{callback.message.text}\n\n👣 <b>Взял на себя:</b> {callback.from_user.first_name}\n⏳ Время пошло!\n\nУдачи, герой!", reply_markup=kb
+            )
 
 @router.callback_query(F.data == "postpone_quest")
 async def process_postpone_quest(callback: types.CallbackQuery):
