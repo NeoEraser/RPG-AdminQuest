@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -19,11 +20,12 @@ async def main():
     default_properties = DefaultBotProperties(parse_mode=ParseMode.HTML)
     session = AiohttpSession(proxy=PROXY_URL) if PROXY_URL else None
     bot = Bot(token=TOKEN, session=session, default=default_properties)
-    
+
     # Инициализация API обертки для тегов (передаем в модуль API)
     api.api_wrapper = api.BotAPIMethods(bot, proxy=PROXY_URL)
-    
-    dp = Dispatcher()
+
+    storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
 
     # Инициализация БД
     await init_db()

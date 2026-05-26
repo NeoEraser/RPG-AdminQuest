@@ -1,15 +1,20 @@
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 import aiosqlite
 from config import DB_NAME
 from services.rpg import calculate_level, exp_for_next_level, get_tag_title
 from database.db import get_month_activity, update_username, check_tos_agreed, set_tos_agreed
-from tos import get_tos_text
+from tos import get_tos_parts
 from datetime import datetime
 import calendar
 
 router = Router()
+
+class TOSStates(StatesGroup):
+    waiting_for_tos_response = State()
 
 def build_activity_calendar(daily_changes: dict, year: int, month: int) -> str:
     """Генерирует GitHub-style календарик активности"""
@@ -46,7 +51,7 @@ def build_activity_calendar(daily_changes: dict, year: int, month: int) -> str:
     return calendar_text #+ legend
 
 @router.message(Command("start"))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute('SELECT user_id, agreed_to_tos FROM users WHERE user_id = ?', (user_id,)) as cursor:
@@ -59,25 +64,58 @@ async def cmd_start(message: types.Message):
             await message.answer("⚔️ Ты уже в строю, боец!")
             return
 
+    await state.set_state(TOSStates.waiting_for_tos_response)
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Принимаю условия", callback_data="accept_tos")],
         [InlineKeyboardButton(text="❌ Отклоняю", callback_data="decline_tos")]
     ])
 
-    await message.answer(get_tos_text(), reply_markup=kb)
+    tos_parts = get_tos_parts()
+    message_ids = []
+
+    for part in tos_parts:
+        msg = await message.answer(part)
+        message_ids.append(msg.message_id)
+
+    msg = await message.answer("Проверь согласие:", reply_markup=kb)
+    message_ids.append(msg.message_id)
+
+    # Сохраняем ID всех сообщений в контексте
+    await state.update_data(tos_message_ids=message_ids)
 
 @router.callback_query(F.data == "accept_tos")
-async def accept_tos(callback: types.CallbackQuery):
+async def accept_tos(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     await set_tos_agreed(user_id)
 
-    await callback.message.delete()
+    data = await state.get_data()
+    message_ids = data.get("tos_message_ids", [])
+
+    # Удаляем все сообщения с TOS
+    for msg_id in message_ids:
+        try:
+            await callback.bot.delete_message(callback.message.chat.id, msg_id)
+        except:
+            pass
+
     await callback.message.answer("✅ Спасибо! Ты согласился с условиями.\n\n🎮 Теперь ты можешь брать квесты. Используй /help для справки.")
+    await state.clear()
 
 @router.callback_query(F.data == "decline_tos")
-async def decline_tos(callback: types.CallbackQuery):
-    await callback.message.delete()
+async def decline_tos(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    message_ids = data.get("tos_message_ids", [])
+
+    # Удаляем все сообщения с TOS
+    for msg_id in message_ids:
+        try:
+            await callback.bot.delete_message(callback.message.chat.id, msg_id)
+        except:
+            pass
+
     await callback.message.answer("❌ Ты не согласился с условиями. Напиши /start, чтобы попробовать еще раз.")
+    await state.clear()
 
 @router.message(Command("profile"))
 async def show_profile(message: types.Message):
