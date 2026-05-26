@@ -197,6 +197,8 @@ async def process_postpone_quest(callback: types.CallbackQuery):
     )
 
     await update_activity(user_id)
+    
+@router.message(F.reply_to_message, F.text.lower().startswith("готово"))
 async def finish_quest(message: types.Message):
     reply_msg = message.reply_to_message
     user_id = message.from_user.id
@@ -340,26 +342,3 @@ async def transfer_quest(message: types.Message):
 
     # Обновляем исходное сообщение квеста
     await reply_msg.edit_text(f"{reply_msg.text}\n\n👤 <b>Квест передан:</b> {target_user_name}", reply_markup=None)
-
-@router.message(F.reply_to_message)
-async def finish_quest(message: types.Message):
-    reply_msg = message.reply_to_message
-    user_id = message.from_user.id
-
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT task_id, worker_id, status, description, reward FROM tasks WHERE bot_msg_id = ?', (reply_msg.message_id,)) as cursor:
-            task = await cursor.fetchone()
-            if not task:
-                return
-
-            task_id, worker_id, status, description, reward = task
-
-            # Сохраняем отчет в переписку
-            await save_quest_message(
-                task_id=task_id,
-                user_id=user_id,
-                user_name=message.from_user.first_name,
-                message_text=message.text,
-                is_reply_to_quest=True,
-                reply_to_message_id=reply_msg.message_id
-            )
