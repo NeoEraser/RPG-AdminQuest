@@ -255,9 +255,9 @@ async def finish_quest(message: types.Message):
     
     title = get_tag_title(new_lvl)
     if is_detailed:
-        await message.answer(f"🌟 <b>Квест выполнен!</b>\nГерой: {message.from_user.full_name} ({title})\nНаграда: +{reward} EXP.\nУровень: <b>{new_lvl}</b>")
+        await message.answer(f"🌟 <b>Квест выполнен!</b>\nГерой: {message.from_user.full_name} ({title})\nНаграда: +{reward} EXP</b>")
     else:
-        await message.answer(f"🤨 <b>Сухой отчет.</b>\nНаграда: +{reward} EXP.\nУровень: <b>{new_lvl}</b>")
+        await message.answer(f"🤨 <b>Сухой отчет.</b>\nНаграда: +{reward} EXP</b>")
 
     # Снимаем с закрепа при выполнении квеста
     try:
