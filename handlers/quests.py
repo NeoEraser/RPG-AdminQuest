@@ -7,6 +7,7 @@ from database.db import update_exp, update_activity, save_timeout, remove_timeou
 from services.scheduler import scheduler, quest_timeout_check
 from services.api import update_telegram_tag
 from services.rpg import calculate_level, get_tag_title
+from services.category_detector import detect_category, format_category_tag
 
 router = Router()
 
@@ -28,16 +29,21 @@ async def create_task(message: types.Message):
     task_text = clean_description(message.text)
     reward = 5
     time_hours = 4
-    if len(task_text) < 15: 
+
+    # Определяем категорию автоматически
+    category = detect_category(task_text)
+    category_tag = format_category_tag(category)
+
+    if len(task_text) < 15:
         return await message.reply("Описание задачи слишком короткое!")
-    try: 
+    try:
         await message.delete()
-    except: 
+    except:
         pass
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Взять квест", callback_data="take_quest")]])
     sent_msg = await message.answer(
-        f"📜 <b>НОВЫЙ КВЕСТ</b>\n\n<b>От:</b> {message.from_user.first_name}\n<b>Суть:</b> {task_text}\n\n<b>Награда:</b> +{reward} EXP\n<b>Время:</b> {time_hours} часа",
+        f"📜 <b>НОВЫЙ КВЕСТ</b> {category_tag}\n\n<b>От:</b> {message.from_user.first_name}\n<b>Суть:</b> {task_text}\n\n<b>Награда:</b> +{reward} EXP\n<b>Время:</b> {time_hours} часа",
         reply_markup=kb
     )
 
@@ -52,10 +58,10 @@ async def create_task(message: types.Message):
 
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            'INSERT INTO tasks (chat_id, bot_msg_id, description, reward, time) VALUES (?, ?, ?, ?, ?)',
-            (sent_msg.chat.id, sent_msg.message_id, task_text, reward, time_hours)
+            'INSERT INTO tasks (chat_id, bot_msg_id, description, category, reward, time) VALUES (?, ?, ?, ?, ?, ?)',
+            (sent_msg.chat.id, sent_msg.message_id, task_text, category, reward, time_hours)
         ) as cursor:
-            task_id = cursor.lastrowid  # Теперь cursor определен
+            task_id = cursor.lastrowid
         await db.commit()
 
         # Сохраняем сообщение с созданием квеста

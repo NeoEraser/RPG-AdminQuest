@@ -21,6 +21,7 @@ async def init_db():
                 chat_id INTEGER,
                 bot_msg_id INTEGER,
                 description TEXT,
+                category TEXT DEFAULT 'Other',
                 worker_id INTEGER DEFAULT NULL,
                 reward INTEGER DEFAULT NULL,
                 time INTEGER DEFAULT NULL,
@@ -83,6 +84,12 @@ async def init_db():
         # Миграция: добавляем колонку agreed_to_tos если её нет
         try:
             await db.execute('ALTER TABLE users ADD COLUMN agreed_to_tos INTEGER DEFAULT 0')
+        except:
+            pass
+
+        # Миграция: добавляем колонку category для квестов если её нет
+        try:
+            await db.execute('ALTER TABLE tasks ADD COLUMN category TEXT DEFAULT "Other"')
         except:
             pass
 

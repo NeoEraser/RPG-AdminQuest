@@ -28,7 +28,7 @@ async def create_incident(message: types.Message):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔥 Спасти мир", callback_data="take_quest")]])
     sent_msg = await message.answer(
-        f"🚨 <b>КРИТИЧЕСКИЙ ИНЦИДЕНТ</b> 🚨\n<b>Проблема:</b> <code>{task_text}</code>\n\n<b>Награда: +{reward} EXP</b>\n<b>Время: {time_hours} час</b>", reply_markup=kb
+        f"🚨 <b>КРИТИЧЕСКИЙ ИНЦИДЕНТ</b> 🚨\n<b>Проблема:</b> {task_text}\n\n<b>Награда: +{reward} EXP</b>\n<b>Время: {time_hours} час</b>", reply_markup=kb
     )
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
