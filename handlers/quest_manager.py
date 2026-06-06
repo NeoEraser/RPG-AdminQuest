@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 import aiosqlite
 from datetime import datetime
 from config import DB_NAME
-from database.db import get_all_quests_with_stats, get_quest_messages, get_task_by_id
+from database.db import get_all_quests_with_stats, get_quest_messages, get_task_by_id, get_quests_by_worker, get_all_workers
 
 router = Router()
 
@@ -15,19 +15,72 @@ user_pages = {}
 
 @router.message(Command("quests_list"))
 async def list_all_quests(message: types.Message):
-    """Выводит список всех квестов с пагинацией"""
+    """Выводит список всех квестов с пагинацией и фильтром по исполнителю"""
     page = 1
     quests = await get_all_quests_with_stats(limit=50)  # Получаем последние 50
-    
+
     if not quests:
         await message.answer("📭 В базе данных нет квестов.")
         return
-    
-    # Сохраняем страницу пользователя
-    user_pages[message.from_user.id] = {'quests': quests, 'page': page}
-    
-    await show_quests_page(message, quests, page)
 
+    # Сохраняем страницу пользователя
+    user_pages[message.from_user.id] = {'quests': quests, 'page': page, 'filter_worker': None}
+
+    # Показываем выбор фильтра
+    await show_worker_filter(message)
+
+
+async def show_worker_filter(message: types.Message):
+    """Показывает фильтр по исполнителям"""
+    workers = await get_all_workers()
+
+    text = "👥 <b>ФИЛЬТР ПО ИСПОЛНИТЕЛЯМ</b>\n\n"
+    text += f"Всего исполнителей: {len(workers)}\n\n"
+    text += "Выберите исполнителя или нажмите 'Все квесты':"
+
+    # Создаем кнопки исполнителей (2 в ряду)
+    keyboard = []
+
+    # Кнопки исполнителей
+    worker_buttons = []
+    for i, worker in enumerate(workers):
+        worker_buttons.append(
+            InlineKeyboardButton(text=f"👤 {worker}", callback_data=f"filter_worker_{worker}")
+        )
+
+    # Добавляем кнопки по 2 в ряду
+    for i in range(0, len(worker_buttons), 2):
+        if i + 1 < len(worker_buttons):
+            keyboard.append([worker_buttons[i], worker_buttons[i + 1]])
+        else:
+            keyboard.append([worker_buttons[i]])
+
+    # Кнопка "Все квесты"
+    keyboard.append([InlineKeyboardButton(text="📋 Все квесты", callback_data="filter_worker_all")])
+
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    await message.answer(text, reply_markup=reply_markup)
+
+@router.callback_query(F.data.startswith("filter_worker_"))
+async def handle_worker_filter(callback: types.CallbackQuery):
+    """Обрабатывает выбор фильтра по исполнителю"""
+    worker_name = callback.data.replace("filter_worker_", "")
+    
+    if worker_name == "all":
+        # Показываем все квесты
+        quests = await get_all_quests_with_stats(limit=50)
+        user_pages[callback.from_user.id] = {'quests': quests, 'page': 1, 'filter_worker': None}
+        await show_quests_page(callback.message, quests, 1)
+    else:
+        # Фильтруем по исполнителю
+        quests = await get_quests_by_worker(worker_name)
+        if not quests:
+            await callback.answer(f"У исполнителя {worker_name} нет квестов!", show_alert=True)
+            return
+        user_pages[callback.from_user.id] = {'quests': quests, 'page': 1, 'filter_worker': worker_name}
+        await show_quests_page(callback.message, quests, 1)
+    
+    await callback.answer()
 
 async def show_quests_page(message: types.Message, quests: list, page: int):
     """Отображает страницу со списком квестов"""
@@ -213,9 +266,16 @@ async def view_quest_details(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "refresh_quests")
 async def refresh_quests_list(callback: types.CallbackQuery):
-    """Обновляет список квестов"""
-    quests = await get_all_quests_with_stats(limit=50)
-    user_pages[callback.from_user.id] = {'quests': quests, 'page': 1}
+    """Обновляет список квестов с учетом текущего фильтра"""
+    user_data = user_pages.get(callback.from_user.id)
+    filter_worker = user_data.get('filter_worker') if user_data else None
+    
+    if filter_worker:
+        quests = await get_quests_by_worker(filter_worker)
+    else:
+        quests = await get_all_quests_with_stats(limit=50)
+    
+    user_pages[callback.from_user.id] = {'quests': quests, 'page': 1, 'filter_worker': filter_worker}
     await show_quests_page(callback.message, quests, 1)
     await callback.answer("Список обновлен!", show_alert=True)
 

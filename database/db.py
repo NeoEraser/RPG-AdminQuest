@@ -236,7 +236,7 @@ async def get_all_quests_with_stats(limit: int = 50) -> list:
     """Получает список всех квестов со статистикой"""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute('''
-            SELECT 
+            SELECT
                 t.task_id,
                 t.bot_msg_id,
                 t.chat_id,
@@ -256,6 +256,47 @@ async def get_all_quests_with_stats(limit: int = 50) -> list:
             LIMIT ?
         ''', (limit,)) as cursor:
             return await cursor.fetchall()
+
+
+async def get_quests_by_worker(worker_name: str, limit: int = 50) -> list:
+    """Получает квесты конкретного исполнителя"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT
+                t.task_id,
+                t.bot_msg_id,
+                t.chat_id,
+                t.description,
+                t.status,
+                t.reward,
+                t.time,
+                t.start_time,
+                u.name as worker_name,
+                COUNT(qm.message_id) as messages_count,
+                MAX(qm.created_at) as last_message
+            FROM tasks t
+            LEFT JOIN users u ON t.worker_id = u.user_id
+            LEFT JOIN quest_messages qm ON t.task_id = qm.task_id
+            WHERE u.name = ?
+            GROUP BY t.task_id
+            ORDER BY t.task_id DESC
+            LIMIT ?
+        ''', (worker_name, limit)) as cursor:
+            return await cursor.fetchall()
+
+
+async def get_all_workers() -> list:
+    """Получает список всех исполнителей (у кого есть завершённые квесты)"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT DISTINCT u.name
+            FROM tasks t
+            JOIN users u ON t.worker_id = u.user_id
+            WHERE t.status IN ('in_progress', 'completed')
+            ORDER BY u.name ASC
+        ''') as cursor:
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows if row[0]]
 
 async def get_task_by_id(task_id: int):
     """Получает информацию о квесте по ID"""
