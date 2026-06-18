@@ -75,11 +75,32 @@ async def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         ''')
+        
+        # Таблица для прокси
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS proxies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                proxy_url TEXT UNIQUE NOT NULL,
+                rating INTEGER DEFAULT 0,
+                last_check DATETIME,
+                is_working BOOLEAN DEFAULT 0,
+                last_error TEXT,
+                success_count INTEGER DEFAULT 0,
+                fail_count INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
         # Индексы для быстрого поиска
         await db.execute('CREATE INDEX IF NOT EXISTS idx_quest_messages_task_id ON quest_messages(task_id)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_quest_messages_created_at ON quest_messages(created_at)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_exp_history_user_date ON exp_history(user_id, change_date)')
+
+        # Индексы для быстрого поиска рабочих прокси
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_proxies_rating ON proxies(rating DESC)')
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_proxies_working ON proxies(is_working)')
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_proxies_last_check ON proxies(last_check)')
 
         # Миграция: добавляем колонку agreed_to_tos если её нет
         try:
@@ -334,3 +355,159 @@ async def get_month_activity(user_id: int, year: int = None, month: int = None) 
         daily_changes[day] = total
 
     return daily_changes
+
+
+async def add_proxy(proxy_url: str) -> bool:
+    """Добавляет новый прокси в базу данных"""
+    try:
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute('''
+                INSERT OR IGNORE INTO proxies (proxy_url, is_working, created_at, updated_at)
+                VALUES (?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ''', (proxy_url,))
+            await db.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Ошибка добавления прокси {proxy_url}: {e}")
+        return False
+
+async def add_proxies_batch(proxy_urls: list) -> int:
+    """Добавляет несколько прокси в базу данных"""
+    added = 0
+    try:
+        async with aiosqlite.connect(DB_NAME) as db:
+            for proxy_url in proxy_urls:
+                try:
+                    await db.execute('''
+                        INSERT OR IGNORE INTO proxies (proxy_url, is_working, created_at, updated_at)
+                        VALUES (?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ''', (proxy_url,))
+                    added += 1
+                except:
+                    pass
+            await db.commit()
+    except Exception as e:
+        logger.error(f"Ошибка добавления прокси: {e}")
+    return added
+
+async def get_working_proxies(limit: int = 10) -> list:
+    """Получает список рабочих прокси с наивысшим рейтингом"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT proxy_url, rating, success_count, fail_count
+            FROM proxies
+            WHERE is_working = 1
+            ORDER BY rating DESC, success_count DESC
+            LIMIT ?
+        ''', (limit,)) as cursor:
+            rows = await cursor.fetchall()
+            return rows
+
+async def get_all_proxies() -> list:
+    """Получает все прокси из базы"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT id, proxy_url, rating, is_working, last_check, success_count, fail_count
+            FROM proxies
+            ORDER BY rating DESC
+        ''') as cursor:
+            return await cursor.fetchall()
+
+async def get_proxy_for_check() -> list:
+    """Получает прокси для проверки (не проверенные более часа или с низким рейтингом)"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT id, proxy_url
+            FROM proxies
+            WHERE last_check IS NULL 
+               OR last_check < datetime('now', '-1 hour')
+               OR rating < 0
+            ORDER BY rating ASC
+            LIMIT 20
+        ''') as cursor:
+            return await cursor.fetchall()
+
+async def update_proxy_rating(proxy_url: str, is_working: bool, error: str = None):
+    """Обновляет рейтинг прокси после проверки"""
+    try:
+        async with aiosqlite.connect(DB_NAME) as db:
+            # Получаем текущий рейтинг
+            async with db.execute('SELECT rating FROM proxies WHERE proxy_url = ?', (proxy_url,)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return
+                
+                current_rating = row[0]
+                
+                # Обновляем рейтинг
+                if is_working:
+                    new_rating = min(10, current_rating + 1)
+                    success_count_inc = 1
+                    fail_count_inc = 0
+                else:
+                    new_rating = max(-10, current_rating - 1)
+                    success_count_inc = 0
+                    fail_count_inc = 1
+                
+                await db.execute('''
+                    UPDATE proxies 
+                    SET rating = ?,
+                        is_working = ?,
+                        last_check = CURRENT_TIMESTAMP,
+                        last_error = ?,
+                        success_count = success_count + ?,
+                        fail_count = fail_count + ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE proxy_url = ?
+                ''', (new_rating, 1 if is_working else 0, error, success_count_inc, fail_count_inc, proxy_url))
+                await db.commit()
+    except Exception as e:
+        logger.error(f"Ошибка обновления рейтинга прокси {proxy_url}: {e}")
+
+async def reset_proxy_ratings():
+    """Сбрасывает рейтинги всех прокси (для перепроверки)"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('UPDATE proxies SET rating = 0, is_working = 0, last_check = NULL')
+        await db.commit()
+
+async def get_best_proxy() -> str:
+    """Получает лучший рабочий прокси"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT proxy_url
+            FROM proxies
+            WHERE is_working = 1
+            ORDER BY rating DESC, success_count DESC
+            LIMIT 1
+        ''') as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+async def cleanup_bad_proxies():
+    """Удаляет прокси с очень низким рейтингом"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('DELETE FROM proxies WHERE rating < -5 AND fail_count > 10')
+        await db.commit()
+
+async def get_proxy_stats() -> dict:
+    """Получает статистику по прокси"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        stats = {}
+        
+        # Общее количество
+        async with db.execute('SELECT COUNT(*) FROM proxies') as cursor:
+            stats['total'] = (await cursor.fetchone())[0]
+        
+        # Рабочие
+        async with db.execute('SELECT COUNT(*) FROM proxies WHERE is_working = 1') as cursor:
+            stats['working'] = (await cursor.fetchone())[0]
+        
+        # Средний рейтинг
+        async with db.execute('SELECT AVG(rating) FROM proxies') as cursor:
+            stats['avg_rating'] = (await cursor.fetchone())[0] or 0
+        
+        # Самый высокий рейтинг
+        async with db.execute('SELECT MAX(rating) FROM proxies') as cursor:
+            stats['max_rating'] = (await cursor.fetchone())[0] or 0
+        
+        return stats
