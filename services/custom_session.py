@@ -1,9 +1,10 @@
-# custom_session.py
+# custom_session.py - исправленная версия
+
 import asyncio
 import logging
 from typing import Optional, Dict, Any, AsyncIterator, List
 from aiogram.client.session.base import BaseSession
-from aiogram.types import User, Update
+from aiogram.types import User, Update, Message
 from aiogram.client.default import Default
 from aiohttp import ClientSession, TCPConnector, ClientTimeout
 from proxy_manager import ProxyManager
@@ -143,6 +144,49 @@ class DynamicProxySession(BaseSession):
         except:
             return None
 
+    def _convert_result(self, result: Any, method_name: str) -> Any:
+        """Конвертирует результат в нужный тип"""
+        if method_name.lower() == 'getme':
+            if isinstance(result, dict):
+                return User(**result)
+            return result
+
+        if method_name.lower() == 'getupdates':
+            if isinstance(result, list):
+                updates = []
+                for item in result:
+                    if isinstance(item, dict):
+                        try:
+                            updates.append(Update(**item))
+                        except Exception:
+                            updates.append(item)
+                    else:
+                        updates.append(item)
+                return updates
+            return []
+
+        # Для sendMessage и других методов возвращаем объекты
+        if method_name.lower() in ['sendmessage', 'sendphoto', 'senddocument', 'sendanimation', 'sendsticker', 'sendvideo', 'sendaudio', 'sendvoice']:
+            if isinstance(result, dict):
+                try:
+                    return Message(**result)
+                except Exception:
+                    return result
+            return result
+
+        if method_name.lower() in ['editmessagetext', 'editmessagecaption', 'editmessagereplymarkup']:
+            if isinstance(result, dict):
+                try:
+                    return Message(**result)
+                except Exception:
+                    return result
+            return result
+
+        if method_name.lower() == 'pinchatmessage':
+            return result
+
+        return result
+
     async def make_request(
         self,
         bot: Any,
@@ -154,10 +198,6 @@ class DynamicProxySession(BaseSession):
 
         method_name = self._extract_method_name(method)
         logger.debug(f"📤 Запрос: {method_name}")
-
-        # Специальная обработка getUpdates
-        if method_name.lower() == 'getupdates':
-            return await self._handle_get_updates(bot, method, payload)
 
         # Извлечение параметров из объекта метода
         if hasattr(method, 'model_dump'):
@@ -172,7 +212,7 @@ class DynamicProxySession(BaseSession):
         real_method = method_name.lstrip('/')
 
         # Принудительно устанавливаем parse_mode=HTML для методов отправки
-        if real_method.lower() in ['sendmessage', 'editmessagetext', 'sendphoto', 'senddocument', 'sendanimation', 'sendsticker']:
+        if real_method.lower() in ['sendmessage', 'editmessagetext']:
             if payload and 'parse_mode' not in payload:
                 payload['parse_mode'] = 'HTML'
             elif payload and isinstance(payload.get('parse_mode'), Default):
@@ -202,11 +242,8 @@ class DynamicProxySession(BaseSession):
 
                 if response_data.get('ok'):
                     result = response_data.get('result')
-
-                    if real_method.lower() == 'getme' and isinstance(result, dict):
-                        return User(**result)
-
-                    return result
+                    # Конвертируем результат в нужный тип
+                    return self._convert_result(result, real_method)
 
                 error_code = response_data.get('error_code')
                 if error_code == 429:
@@ -263,60 +300,6 @@ class DynamicProxySession(BaseSession):
                 raise
 
         raise Exception("Все попытки запроса исчерпаны")
-
-    async def _handle_get_updates(self, bot: Any, method: Any, payload: Optional[Dict[str, Any]]) -> List[Update]:
-        """Обрабатывает getUpdates отдельно"""
-        if hasattr(method, 'model_dump'):
-            method_params = method.model_dump(exclude_none=True)
-            if method_params:
-                if payload is None:
-                    payload = {}
-                for key, value in method_params.items():
-                    if not isinstance(value, Default):
-                        payload[key] = value
-
-        cleaned_payload = self._clean_payload(payload)
-
-        for attempt in range(5):
-            try:
-                session = await self._ensure_session()
-                url = f"https://api.telegram.org/bot{bot.token}/getUpdates"
-
-                async with session.get(url, params=cleaned_payload) as response:
-                    response_data = await response.json()
-
-                if response_data.get('ok'):
-                    result = response_data.get('result')
-                    if isinstance(result, list):
-                        updates = []
-                        for update_data in result:
-                            if isinstance(update_data, dict):
-                                try:
-                                    updates.append(Update(**update_data))
-                                except Exception:
-                                    updates.append(update_data)
-                            else:
-                                updates.append(update_data)
-                        return updates
-                    return []
-
-                error_code = response_data.get('error_code')
-                if error_code == 429:
-                    retry_after = response_data.get('parameters', {}).get('retry_after', 5)
-                    await asyncio.sleep(retry_after + 1)
-                    continue
-
-                if error_code == 404:
-                    return []
-
-                return []
-
-            except Exception as e:
-                logger.error(f"❌ getUpdates ошибка (попытка {attempt + 1}): {e}")
-                if attempt < 4:
-                    await asyncio.sleep(2 ** attempt)
-
-        return []
 
     async def stream_content(
         self,

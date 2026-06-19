@@ -44,7 +44,6 @@ class BotAPIMethods:
                             )
         except Exception as e:
             logger.error(f"Ошибка установки тега: {e}")
-            raise
 
 
 # Глобальная переменная
@@ -66,5 +65,3 @@ async def update_telegram_tag(chat_id: int, user_id: int, level: int):
             logger.warning(f"Нет прав на смену тегов в чате {chat_id}.")
         elif "tag_invalid" in error_text:
             logger.error(f"Telegram отклонил тег '{new_tag}'.")
-        else:
-            raise
