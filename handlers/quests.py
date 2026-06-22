@@ -44,6 +44,7 @@ async def create_task(message: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Взять квест", callback_data="take_quest")]])
     sent_msg = await message.answer(
         f"📜 <b>НОВЫЙ КВЕСТ</b> {category_tag}\n\n<b>От:</b> {message.from_user.first_name}\n<b>Суть:</b> {task_text}\n\n<b>Награда:</b> +{reward} EXP\n<b>Время:</b> {time_hours} часа",
+        parse_mode="HTML",
         reply_markup=kb
     )
 
@@ -133,7 +134,9 @@ async def process_take_quest(callback: types.CallbackQuery):
             ]])
 
             await callback.message.edit_text(
-                f"{callback.message.text}\n\n👣 <b>Взял на себя:</b> {callback.from_user.first_name}\n⏳ Время пошло!\n\nУдачи, герой!", reply_markup=kb
+                f"{callback.message.text}\n\n👣 <b>Взял на себя:</b> {callback.from_user.first_name}\n⏳ Время пошло!\n\nУдачи, герой!",
+                parse_mode="HTML",
+                reply_markup=kb
             )
 
 @router.callback_query(F.data == "postpone_quest")
@@ -203,6 +206,7 @@ async def process_postpone_quest(callback: types.CallbackQuery):
     # Обновляем сообщение с информацией об отсрочке
     await callback.message.edit_text(
         f"{callback.message.text}\n\n✋ <b>Отсрочка активирована:</b> {callback.from_user.first_name}\n⏳ Добавлено 4 часа",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⏸ Отсрочка", callback_data="postpone_quest")
         ]])

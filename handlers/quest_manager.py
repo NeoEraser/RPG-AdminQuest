@@ -221,7 +221,7 @@ async def view_quest_details(callback: types.CallbackQuery):
     }.get(status, status)
     
     # Ссылка на сообщение с квестом
-    quest_link = f"https://t.me/c/{abs(int(str(chat_id)[2:]))}/52/{bot_msg_id}" if chat_id and bot_msg_id else "Нет ссылки"
+    quest_link = f"https://t.me/c/{abs(int(str(chat_id)[2:]))}/{bot_msg_id}" if chat_id and bot_msg_id else "Нет ссылки"
     
     text = f"📋 <b>ДЕТАЛИ КВЕСТА #{task_id}</b>\n\n"
     text += f"{status_emoji} <b>Статус:</b> {status_names}\n"

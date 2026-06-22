@@ -28,7 +28,9 @@ async def create_incident(message: types.Message):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔥 Спасти мир", callback_data="take_quest")]])
     sent_msg = await message.answer(
-        f"🚨 <b>КРИТИЧЕСКИЙ ИНЦИДЕНТ</b> 🚨\n<b>Проблема:</b> {task_text}\n\n<b>Награда: +{reward} EXP</b>\n<b>Время: {time_hours} час</b>", reply_markup=kb
+        f"🚨 <b>КРИТИЧЕСКИЙ ИНЦИДЕНТ</b> 🚨\n<b>Проблема:</b> {task_text}\n\n<b>Награда: +{reward} EXP</b>\n<b>Время: {time_hours} час</b>", 
+        parse_mode="HTML",
+        reply_markup=kb
     )
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
@@ -79,7 +81,7 @@ async def reject_task(message: types.Message):
             await db.commit()
     
     # Обновляем сообщение с задачей
-    await reply_msg.edit_text(f"{reply_msg.text}\n\n<b>⚠️ <b>Отклонено проверяющим!</b> Необходимо исправить.</b>", reply_markup=None)
+    await reply_msg.edit_text(f"{reply_msg.text}\n\n<b>⚠️ <b>Отклонено проверяющим!</b> Необходимо исправить.</b>", parse_mode="HTML", reply_markup=None)
 
     # Закрепляем сообщение с квестом (тихое закрепление)
     try:

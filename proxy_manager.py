@@ -3,6 +3,7 @@ import asyncio
 import logging
 from typing import Optional, List, Tuple, Dict
 import aiohttp
+import aiosqlite
 from aiohttp import ClientTimeout
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
