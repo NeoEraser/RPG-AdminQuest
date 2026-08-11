@@ -1,5 +1,5 @@
 .env
-gamebot_rpg.db
+*.db
 
 __pycache__
 __pycache__/
