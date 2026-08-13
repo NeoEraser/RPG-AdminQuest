@@ -150,6 +150,39 @@ async def callback_wiki_stats(callback: types.CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "wiki_list")
+async def callback_wiki_list(callback: types.CallbackQuery):
+    """Показывает список категорий — обработчик для кнопок "Назад" и "Назад к категориям"."""
+    categories = await get_all_categories()
+    stats = await get_wiki_stats()
+
+    text = f"📚 <b>БАЗА ЗНАНИЙ</b>\n\n"
+    text += f"Всего статей: {stats['total']} | Подтверждено: {stats['verified']}\n\n"
+
+    if categories:
+        text += "<b>Категории:</b>\n"
+        for cat in categories:
+            cnt = stats['by_category'].get(cat, 0)
+            text += f"  • {cat} ({cnt})\n"
+        text += "\n"
+        # Кнопки категорий
+        kb = InlineKeyboardMarkup(inline_keyboard=[])
+        for cat in categories:
+            kb.inline_keyboard.append([
+                InlineKeyboardButton(text=f"📂 {cat}", callback_data=f"wiki_cat_{cat}")
+            ])
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(text="📊 Статистика", callback_data="wiki_stats")
+        ])
+    else:
+        text += "Пока нет подтверждённых статей.\n\n"
+        text += "Напишите <code>/wiki add</code> чтобы добавить первое решение!"
+        kb = None
+
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("wiki_like_"))
 async def callback_wiki_like(callback: types.CallbackQuery):
     """Лайк статьи."""
