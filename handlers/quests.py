@@ -9,6 +9,9 @@ from services.api import update_telegram_tag
 from services.rpg import calculate_level, get_tag_title
 from services.category_detector import detect_category, format_category_tag
 
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+
 router = Router()
 
 # Функция для очистки описания от команд
@@ -384,11 +387,9 @@ async def transfer_quest(message: types.Message):
 # ─────────────────────────── Wiki save callbacks ───────────────────────────
 
 @router.callback_query(F.data.startswith("save_wiki_"))
-async def callback_save_wiki(callback: types.CallbackQuery):
-    """Пользователь хочет сохранить решение в Wiki."""
-    from services.wiki import suggest_wiki_category, suggest_wiki_title, save_wiki_article
-    from aiogram.fsm.state import State, StatesGroup
-    from aiogram.fsm.context import FSMContext
+async def callback_save_wiki(callback: types.CallbackQuery, state: FSMContext):
+    """Пользователь хочет сохранить решение в Wiki. Перенаправляет во FSM ожидания текста."""
+    from services.wiki import suggest_wiki_category, suggest_wiki_title
 
     task_id = int(callback.data.split("_")[-1])
 
@@ -406,20 +407,9 @@ async def callback_save_wiki(callback: types.CallbackQuery):
     await callback.message.edit_reply_markup()  # убираем кнопки
     await callback.answer("✍️ Отправьте текст решения в чат", show_alert=False)
 
-    # Сохраняем task_id в FSM
-    state = callback.bot.user  # это не FSM, используем временное хранилище
-    # Для простоты используем callback data - но нам нужно FSM
-    # Используем простую структуру: сохраняем данные и ждём ввод
-
-    # Сохраняем task_id и описание в "временную память" через callback
-    # Используем подход: запоминаем task_id в user_pages (уже есть в quest_manager)
-    # Или просто используем отдельный словарь
-    global _wiki_input_state
-    _wiki_input_state[callback.from_user.id] = {
-        "task_id": task_id,
-        "description": description,
-        "category": category
-    }
+    # Сохраняем task_id и описание в FSM
+    await state.update_data(task_id=task_id, description=description, category=category)
+    await state.set_state(WikiSaveStates.waiting_for_text)
 
     await callback.message.answer(
         f"📚 <b>Добавление в Wiki</b>\n\n"
@@ -451,23 +441,18 @@ def _clean_description(text: str) -> str:
     text = text.strip()
     return text
 
-# Глобальное состояние для ввода Wiki
-_wiki_input_state: dict = {}
+class WikiSaveStates(StatesGroup):
+    waiting_for_text = State()
 
 
-@router.message(F.text)
-async def wiki_input_handler(message: types.Message):
-    """Обработчик ввода текста для Wiki."""
+@router.message(WikiSaveStates.waiting_for_text)
+async def wiki_save_text(message: types.Message, state: FSMContext):
+    """Обработчик ввода текста для сохранения решения в Wiki (FSM)."""
     user_id = message.from_user.id
-
-    if user_id not in _wiki_input_state:
-        return
-
-    state_data = _wiki_input_state[user_id]
 
     # Проверяем команду отмены
     if message.text.strip().lower() in ("/wiki_skip", "/wiki_cancel", "/отмена"):
-        del _wiki_input_state[user_id]
+        await state.clear()
         await message.answer("❌ Добавление статьи отменено.")
         return
 
@@ -476,12 +461,17 @@ async def wiki_input_handler(message: types.Message):
         await message.answer("Слишком короткий текст. Напишите подробнее (минимум 15 символов).")
         return
 
+    # Получаем данные из состояния
+    data = await state.get_data()
+    task_id = data.get("task_id")
+    description = data.get("description", "")
+    category = data.get("category", "Other")
+
     # Сохраняем статью
-    from services.wiki import save_wiki_article, suggest_wiki_category
+    from services.wiki import save_wiki_article, suggest_wiki_title
     from database.db import update_exp
 
-    title = suggest_wiki_title(state_data["description"])
-    category = state_data.get("category", "Other")
+    title = suggest_wiki_title(description)
 
     article_id = await save_wiki_article(
         title=title,
@@ -495,7 +485,7 @@ async def wiki_input_handler(message: types.Message):
     # Награда за сохранение решения
     await update_exp(user_id, 20, reason="wiki_add")
 
-    del _wiki_input_state[user_id]
+    await state.clear()
 
     await message.answer(
         f"✅ <b>Решение сохранено в базу знаний!</b>\n\n"
