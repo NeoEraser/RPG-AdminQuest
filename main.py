@@ -8,15 +8,18 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from config import TOKEN, GROUP_ID
-from database.db import init_db, add_proxies_batch
+from database.db import init_db
+from database.db import add_proxies_batch
+from database.wiki import init_wiki_table
 from services import api
 from services.scheduler import scheduler, daily_plan_check, skill_decay_check, reset_monthly_exp, monthly_results_check, restore_timeouts
+from services.weekly_report import generate_weekly_report
 from services.custom_session import DynamicProxySession
 from proxy_manager import ProxyManager
 from services.proxy_monitor import ProxyMonitor
 
 # Импортируем роутеры
-from handlers import basic, quests, incidents, admin, quest_manager
+from handlers import basic, quests, incidents, admin, quest_manager, wiki
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,6 +81,7 @@ async def run_bot_with_recovery():
 async def main():
     # 1. Инициализация БД
     await init_db()
+    await init_wiki_table()
     
     # 2. Инициализируем менеджер прокси
     proxy_manager = ProxyManager(TOKEN)
@@ -105,8 +109,9 @@ async def main():
         ('basic', basic.router),
         ('admin', admin.router),
         ('incidents', incidents.router),
-        ('quests', quests.router),
-        ('quest_manager', quest_manager.router)
+        ('quest_manager', quest_manager.router),
+        ('wiki', wiki.router),
+        ('quests', quests.router) # должен последним инициализироваться
     ]
     
     for name, router in router_instances:
@@ -124,6 +129,7 @@ async def main():
     scheduler.add_job(skill_decay_check, 'cron', day_of_week='tue-fri', hour=10, minute=0, args=[bot])
     scheduler.add_job(reset_monthly_exp, 'cron', day=1, hour=0, minute=0, args=[bot])
     scheduler.add_job(monthly_results_check, 'cron', day='last', hour=12, minute=0, args=[bot, GROUP_ID])
+    scheduler.add_job(generate_weekly_report, 'cron', day_of_week='mon', hour=9, minute=30, args=[bot, GROUP_ID])
     scheduler.start()
     
     # 9. Проверяем авторизацию бота

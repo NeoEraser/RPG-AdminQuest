@@ -14,14 +14,17 @@ router = Router()
 # Функция для очистки описания от команд
 def clean_description(text: str) -> str:
     """Очищает описание квеста от ключевых слов команд"""
+    keywords = ["НоваяЗадача", "НовыйКвест", "инцидент"]
     text = text.strip()
-    # Удаляем команды из начала строки (регистронезависимо)
-    text = text.replace("НоваяЗадача", "").replace("новаязадача", "")
-    text = text.replace("НовыйКвест", "").replace("новыйквест", "")
-    text = text.replace("инцидент", "")
-    # Удаляем пробелы в начале и конце
-    text = text.strip()
-    return text
+    
+    for keyword in keywords:
+        # Перебираем возможные варианты регистра
+        text = text.replace(keyword, "")
+        text = text.replace(keyword.lower(), "")
+        text = text.replace(keyword.title(), "")
+        text = text.replace(keyword.upper(), "")
+    
+    return " ".join(text.split())
 
 @router.message(F.text.lower().contains("новаязадача") | F.text.lower().contains("новыйквест"))
 async def create_task(message: types.Message):
@@ -217,16 +220,16 @@ async def finish_quest(message: types.Message):
     report_text = message.text[6:].strip()
 
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('SELECT task_id, worker_id, status, description, reward FROM tasks WHERE bot_msg_id = ?', (reply_msg.message_id,)) as cursor:
+        async with db.execute('SELECT task_id, worker_id, status, description, reward, category FROM tasks WHERE bot_msg_id = ?', (reply_msg.message_id,)) as cursor:
             task = await cursor.fetchone()
-            if not task: 
+            if not task:
                 return
-            
-            task_id, worker_id, status, description, reward = task
-            
-            if status == 'completed': 
+
+            task_id, worker_id, status, description, reward, category = task
+
+            if status == 'completed':
                 return await message.reply("🏁 Квест уже сдан.")
-            if worker_id != user_id: 
+            if worker_id != user_id:
                 return await message.reply("🧙‍♂️ Это не твой квест.")
 
             # Сохраняем отчет в переписку
@@ -241,24 +244,24 @@ async def finish_quest(message: types.Message):
 
             is_detailed = len(report_text) >= 15
             reward = reward if is_detailed else 1
-            
+
             # Удаляем таймаут из БД
             await remove_timeout(reply_msg.message_id)
-            
+
             # Удаляем задачу из планировщика
             try:
                 scheduler.remove_job(f"quest_timeout_{reply_msg.message_id}")
             except:
                 pass
-            
+
             await db.execute('UPDATE tasks SET status = "completed" WHERE task_id = ?', (task_id,))
             await db.commit()
 
     new_exp = await update_exp(user_id, reward, reason="quest")
-    await update_activity(user_id) # Сброс АФК таймера
+    await update_activity(user_id)
     new_lvl = calculate_level(new_exp)
     await update_telegram_tag(message.chat.id, user_id, new_lvl)
-    
+
     title = get_tag_title(new_lvl)
     if is_detailed:
         await message.answer(f"🌟 <b>Квест выполнен!</b>\nГерой: {message.from_user.full_name} ({title})\nНаграда: +{reward} EXP")
@@ -272,6 +275,21 @@ async def finish_quest(message: types.Message):
         print(f"Не удалось открепить сообщение: {e}")
 
     await reply_msg.edit_text(f"{reply_msg.text}\n\n<b>✅ Квест сдан</b>", reply_markup=None)
+
+    # ── Промпт: сохранить решение в Wiki ──
+    kb_wiki = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="💾 Сохранить в Wiki", callback_data=f"save_wiki_{task_id}"),
+            InlineKeyboardButton(text="🙅 Нет, не нужно", callback_data=f"no_wiki_{task_id}")
+        ]
+    ])
+    await message.answer(
+        f"📚 <b>Сохранить решение в базу знаний?</b>\n\n"
+        f"Это поможет другим инженерам быстрее решать похожие задачи.\n"
+        f"За +20 EXP и звание «Архивариус» тимлид добавит статью.\n"
+        f"Нажмите кнопку — и тимлид получит уведомление.",
+        reply_markup=kb_wiki
+    )
 
 @router.message(F.text.lower().startswith("план на завтра") | F.text.lower().startswith("планы на завтра"))
 async def set_daily_plan(message: types.Message):
@@ -354,3 +372,129 @@ async def transfer_quest(message: types.Message):
 
     # Обновляем исходное сообщение квеста
     await reply_msg.edit_text(f"{reply_msg.text}\n\n👤 <b>Квест передан:</b> {target_user_name}", reply_markup=None)
+
+
+# ─────────────────────────── Wiki save callbacks ───────────────────────────
+
+@router.callback_query(F.data.startswith("save_wiki_"))
+async def callback_save_wiki(callback: types.CallbackQuery):
+    """Пользователь хочет сохранить решение в Wiki."""
+    from services.wiki import suggest_wiki_category, suggest_wiki_title, save_wiki_article
+    from aiogram.fsm.state import State, StatesGroup
+    from aiogram.fsm.context import FSMContext
+
+    task_id = int(callback.data.split("_")[-1])
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT description, category FROM tasks WHERE task_id = ?
+        ''', (task_id,)) as cursor:
+            task = await cursor.fetchone()
+
+    if not task:
+        return await callback.answer("Квест не найден", show_alert=True)
+
+    description, category = task
+
+    await callback.message.edit_reply_markup()  # убираем кнопки
+    await callback.answer("✍️ Отправьте текст решения в чат", show_alert=False)
+
+    # Сохраняем task_id в FSM
+    state = callback.bot.user  # это не FSM, используем временное хранилище
+    # Для простоты используем callback data - но нам нужно FSM
+    # Используем простую структуру: сохраняем данные и ждём ввод
+
+    # Сохраняем task_id и описание в "временную память" через callback
+    # Используем подход: запоминаем task_id в user_pages (уже есть в quest_manager)
+    # Или просто используем отдельный словарь
+    global _wiki_input_state
+    _wiki_input_state[callback.from_user.id] = {
+        "task_id": task_id,
+        "description": description,
+        "category": category
+    }
+
+    await callback.message.answer(
+        f"📚 <b>Добавление в Wiki</b>\n\n"
+        f"Квест #{task_id}: {description[:80]}\n"
+        f"Категория (предложенная): {category}\n\n"
+        f"✍️ Напишите текст решения:\n"
+        f"1. Опишите проблему\n"
+        f"2. Опишите решение пошагово\n"
+        f"3. Укажите важные нюансы\n\n"
+        f"Напишите <code>/wiki_skip</code> чтобы пропустить."
+    )
+
+
+@router.callback_query(F.data.startswith("no_wiki_"))
+async def callback_no_wiki(callback: types.CallbackQuery):
+    """Пользователь отказался сохранять в Wiki."""
+    task_id = int(callback.data.split("_")[-1])
+    await callback.message.edit_reply_markup()
+    await callback.answer("OK, решение не сохранено", show_alert=False)
+    await callback.message.answer("👍 Если передумаете — напишите <code>/wiki</code> в любой момент.")
+
+
+def _clean_description(text: str) -> str:
+    """Очищает описание квеста от команд"""
+    text = text.strip()
+    text = text.replace("НоваяЗадача", "").replace("новаязадача", "")
+    text = text.replace("НовыйКвест", "").replace("новыйквест", "")
+    text = text.replace("инцидент", "")
+    text = text.strip()
+    return text
+
+# Глобальное состояние для ввода Wiki
+_wiki_input_state: dict = {}
+
+
+@router.message(F.text)
+async def wiki_input_handler(message: types.Message):
+    """Обработчик ввода текста для Wiki."""
+    user_id = message.from_user.id
+
+    if user_id not in _wiki_input_state:
+        return
+
+    state_data = _wiki_input_state[user_id]
+
+    # Проверяем команду отмены
+    if message.text.strip().lower() in ("/wiki_skip", "/wiki_cancel", "/отмена"):
+        del _wiki_input_state[user_id]
+        await message.answer("❌ Добавление статьи отменено.")
+        return
+
+    text = message.text.strip()
+    if len(text) < 15:
+        await message.answer("Слишком короткий текст. Напишите подробнее (минимум 15 символов).")
+        return
+
+    # Сохраняем статью
+    from services.wiki import save_wiki_article, suggest_wiki_category
+    from database.db import update_exp
+
+    title = suggest_wiki_title(state_data["description"])
+    category = state_data.get("category", "Other")
+
+    article_id = await save_wiki_article(
+        title=title,
+        content=text,
+        category=category,
+        author_id=user_id,
+        author_name=message.from_user.first_name,
+        is_verified=0  # требует проверки тимлида
+    )
+
+    # Награда за сохранение решения
+    await update_exp(user_id, 20, reason="wiki_add")
+
+    del _wiki_input_state[user_id]
+
+    await message.answer(
+        f"✅ <b>Решение сохранено в базу знаний!</b>\n\n"
+        f"📚 <b>{title}</b>\n"
+        f"📂 Категория: {category}\n"
+        f"⏳ Статус: на проверке у тимлида\n"
+        f"💰 Награда: +20 EXP\n\n"
+        f"После проверки тимлида статья появится для всех через <code>/wiki</code>"
+    )
