@@ -17,8 +17,6 @@ from datetime import datetime
 from config import DB_NAME, TEAMLEAD_ID
 from services.wiki import (
     search_wiki,
-    # search_wiki_by_text may exist; import if available
-    get_wiki_article_by_id,
     get_all_categories,
     get_wiki_by_category,
     like_wiki_article,
@@ -26,6 +24,7 @@ from services.wiki import (
     suggest_wiki_category,
     suggest_wiki_title,
     save_wiki_article,
+    get_wiki_article_by_id,
 )
 
 router = Router()
@@ -152,39 +151,6 @@ async def callback_wiki_stats(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "wiki_list")
-async def callback_wiki_list(callback: types.CallbackQuery):
-    """Показывает список категорий — обработчик для кнопок "Назад" и "Назад к категориям"."""
-    categories = await get_all_categories()
-    stats = await get_wiki_stats()
-
-    text = f"📚 <b>БАЗА ЗНАНИЙ</b>\n\n"
-    text += f"Всего статей: {stats['total']} | Подтверждено: {stats['verified']}\n\n"
-
-    if categories:
-        text += "<b>Категории:</b>\n"
-        for cat in categories:
-            cnt = stats['by_category'].get(cat, 0)
-            text += f"  • {cat} ({cnt})\n"
-        text += "\n"
-        # Кнопки категорий
-        kb = InlineKeyboardMarkup(inline_keyboard=[])
-        for cat in categories:
-            kb.inline_keyboard.append([
-                InlineKeyboardButton(text=f"📂 {cat}", callback_data=f"wiki_cat_{cat}")
-            ])
-        kb.inline_keyboard.append([
-            InlineKeyboardButton(text="📊 Статистика", callback_data="wiki_stats")
-        ])
-    else:
-        text += "Пока нет подтверждённых статей.\n\n"
-        text += "Напишите <code>/wiki_add</code> чтобы добавить первое решение!"
-        kb = None
-
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
-    await callback.answer()
-
-
 @router.callback_query(F.data.startswith("wiki_like_"))
 async def callback_wiki_like(callback: types.CallbackQuery):
     """Лайк статьи."""
@@ -198,50 +164,44 @@ async def callback_wiki_like(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("wiki_open_"))
 async def callback_wiki_open(callback: types.CallbackQuery):
-    """Показать полное решение статьи по ID."""
-    aid = int(callback.data.replace("wiki_open_", ""))
-    article = await get_wiki_article_by_id(aid)
+    """Показать полную статью по ID."""
+    article_id = int(callback.data.replace("wiki_open_", ""))
+    article = await get_wiki_article_by_id(article_id)
     if not article:
-        await callback.answer("Статья не найдена", show_alert=True)
-        return
-    _id, title, content, category, tags, author, likes, created, is_verified = article
-    lines = [f"📚 <b>{title}</b>  <i>({category})</i>\n"]
-    lines.append(content)
-    lines.append(f"\n👤 {author or 'anon'} | ❤️ {likes} | {datetime.fromisoformat(created.replace(' ', '+')).strftime('%d.%m.%Y')}")
+        return await callback.answer("Статья не найдена", show_alert=True)
+    aid, title, content, category, tags, author, likes, created = article
 
+    text = f"📚 <b>{title}</b> <i>({category})</i>\n\n{content}\n\n👤 {author or 'anon'} | ❤️ {likes}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❤️ Полезно", callback_data=f"wiki_like_{_id}"),
-         InlineKeyboardButton(text="◀️ Назад", callback_data="wiki_list")]
+        [InlineKeyboardButton(text="❤️ Полезно", callback_data=f"wiki_like_{aid}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="wiki_list")]
     ])
 
-    await callback.message.answer('\n'.join(lines), parse_mode='HTML', reply_markup=kb)
+    # Отправляем в чат, где нажали кнопку (работает и в личке и в группе)
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("wiki_check_"))
 async def callback_wiki_check(callback: types.CallbackQuery):
-    """Показать чек-лист (сокращённый вид) статьи по ID."""
-    aid = int(callback.data.replace("wiki_check_", ""))
-    article = await get_wiki_article_by_id(aid)
+    """Показать чек-лист (первые строки статьи)."""
+    article_id = int(callback.data.replace("wiki_check_", ""))
+    article = await get_wiki_article_by_id(article_id)
     if not article:
-        await callback.answer("Статья не найдена", show_alert=True)
-        return
-    _id, title, content, category, tags, author, likes, created, is_verified = article
-    # Попробуем вытащить первые 8 строк как чек-лист
-    lines = [f"📋 <b>Чек-лист: {title}</b>\n"]
-    content_lines = content.splitlines()
-    for l in content_lines[:8]:
-        l = l.strip()
-        if not l: continue
-        lines.append(f"• {l[:200]}")
-    lines.append('\nЧтобы увидеть полное решение — нажмите «Открыть решение».')
+        return await callback.answer("Статья не найдена", show_alert=True)
+    aid, title, content, category, tags, author, likes, created = article
 
+    # Берём первые 8 непустых строк как чек-лист
+    lines = [l.strip() for l in content.splitlines() if l.strip()]
+    checklist = "\n".join(lines[:8]) if lines else content[:400]
+
+    text = f"🗒️ <b>Чек-лист: {title}</b>\n\n{checklist}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Открыть решение", callback_data=f"wiki_open_{_id}"),
-         InlineKeyboardButton(text="❤️ Полезно", callback_data=f"wiki_like_{_id}")]
+        [InlineKeyboardButton(text="Открыть решение", callback_data=f"wiki_open_{aid}" )],
+        [InlineKeyboardButton(text="❤️ Полезно", callback_data=f"wiki_like_{aid}")]
     ])
 
-    await callback.message.answer('\n'.join(lines), parse_mode='HTML', reply_markup=kb)
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
 
@@ -312,13 +272,13 @@ async def wiki_add_content(message: types.Message, state: FSMContext):
 
     # Награда автору
     from database.db import update_exp
-    await update_exp(message.from_user.id, 5, reason="wiki_add")
+    await update_exp(message.from_user.id, 20, reason="wiki_add")
 
     await message.answer(
         f"✅ Статья добавлена в Wiki!\n\n"
         f"📚 <b>{title}</b>\n"
         f"📂 Категория: {category}\n"
-        f"💰 Награда: +5 EXP (Звание Архивариуса)\n\n"
+        f"💰 Награда: +20 EXP (Звание Архивариуса)\n\n"
         f"Теперь инженеры могут найти это решение через /wiki"
     )
 

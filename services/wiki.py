@@ -109,6 +109,18 @@ async def get_wiki_by_category(category: str, limit: int = 10) -> List[Tuple]:
             return await cursor.fetchall()
 
 
+async def get_wiki_article_by_id(article_id: int):
+    """Возвращает статью по ID или None."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT id, title, content, category, tags, author_name, likes, created_at
+            FROM wiki
+            WHERE id = ?
+        ''', (article_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row
+
+
 async def get_all_categories() -> List[str]:
     """Получает все категории из wiki."""
     async with aiosqlite.connect(DB_NAME) as db:
@@ -149,79 +161,8 @@ async def get_wiki_stats() -> dict:
         return stats
 
 
-def normalize_wiki_text(value: str) -> str:
-    """Нормализует текст для поиска по ключевым словам."""
-    value = re.sub(r'[^a-zA-ZА-Яа-я0-9\s]', ' ', (value or '').lower())
-    return ' '.join(value.split())
-
-
-def collect_search_terms(text: str, min_len: int = 2) -> List[str]:
-    """Возвращает ключевые слова из описания проблемы."""
-    excluded = {
-        'новый', 'новая', 'новое', 'квест', 'задача', 'задачи', 'инцидент',
-        'проблема', 'ошибка', 'сотрудник', 'клиент', 'подсказка', 'помощь',
-        'решение', 'мне', 'нужно', 'сделать', 'уже', 'через', 'после', 'перед',
-        'не', 'нет', 'где', 'когда', 'что', 'как', 'и', 'или', 'на', 'в', 'по',
-    }
-    terms = []
-    for word in normalize_wiki_text(text).split():
-        if len(word) >= min_len and word not in excluded:
-            terms.append(word)
-    return list(dict.fromkeys(terms))
-
-
-async def search_wiki_by_text(text: str, limit: int = 5) -> List[Tuple]:
-    """Ищет похожие статьи по смыслу текста задачи."""
-    terms = collect_search_terms(text)
-    if not terms:
-        return []
-
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('''
-            SELECT id, title, content, category, tags, author_name, likes, created_at
-            FROM wiki
-            WHERE is_verified = 1
-            ORDER BY likes DESC, created_at DESC
-        ''') as cursor:
-            rows = await cursor.fetchall()
-
-    scored = []
-    for row in rows:
-        row_id, title, content, category, tags, author_name, likes, created_at = row
-        title_text = normalize_wiki_text(title)
-        content_text = normalize_wiki_text(content)
-        tags_text = normalize_wiki_text(tags or '')
-
-        score = 0
-        for term in terms:
-            if term in title_text:
-                score += 8
-            if term in tags_text:
-                score += 6
-            if term in content_text:
-                score += 3
-
-        if score > 0:
-            scored.append((score, row))
-
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [row for _, row in scored[:limit]]
-
-
-async def get_wiki_article_by_id(article_id: int):
-    """Возвращает запись статьи по ID.
-    Формат: (id, title, content, category, tags, author_name, likes, created_at, is_verified)
-    """
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute('''
-            SELECT id, title, content, category, tags, author_name, likes, created_at, is_verified
-            FROM wiki WHERE id = ?
-        ''', (article_id,)) as cursor:
-            row = await cursor.fetchone()
-            return row
-
-
 # ─────────────────────────── category matching ───────────────────────────
+
 # Используем ту же систему категорий, что и в category_detector
 CATEGORIES = {
     "1С": ["1с", "1c", "один с", "бухгалтер", "бух", "отчет", "конфигурация", "sbis", "упд", "платеж"],
