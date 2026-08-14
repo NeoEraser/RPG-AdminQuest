@@ -63,6 +63,20 @@ async def init_db():
                 FOREIGN KEY (task_id) REFERENCES tasks(task_id)
             )
         ''')
+
+        # Таблица для хранения использований статей wiki при сдаче квестов
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS quest_wiki_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER,
+                article_id INTEGER,
+                user_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+                FOREIGN KEY (article_id) REFERENCES wiki(id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        ''')
         
         # Таблица для истории изменений EXP
         await db.execute('''
@@ -95,6 +109,8 @@ async def init_db():
         # Индексы для быстрого поиска
         await db.execute('CREATE INDEX IF NOT EXISTS idx_quest_messages_task_id ON quest_messages(task_id)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_quest_messages_created_at ON quest_messages(created_at)')
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_quest_wiki_usage_task ON quest_wiki_usage(task_id)')
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_quest_wiki_usage_article ON quest_wiki_usage(article_id)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_exp_history_user_date ON exp_history(user_id, change_date)')
 
         # Индексы для быстрого поиска рабочих прокси
@@ -241,6 +257,17 @@ async def save_quest_message(task_id: int, user_id: int, user_name: str, message
         ''', (new_id, task_id, user_id, user_name, message_text, is_reply_to_quest, reply_to_message_id))
         await db.commit()
         return new_id
+
+
+async def save_wiki_usage(task_id: int, article_id: int, user_id: int) -> int:
+    """Сохраняет факт использования статьи для закрытия квеста"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            INSERT INTO quest_wiki_usage (task_id, article_id, user_id) VALUES (?, ?, ?)
+        ''', (task_id, article_id, user_id)) as cursor:
+            new_id = cursor.lastrowid
+        await db.commit()
+    return new_id
 
 async def get_quest_messages(task_id: int) -> list:
     """Получает все сообщения по квесту"""

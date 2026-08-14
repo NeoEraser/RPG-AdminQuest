@@ -174,6 +174,7 @@ async def callback_wiki_open(callback: types.CallbackQuery):
     text = f"📚 <b>{title}</b> <i>({category})</i>\n\n{content}\n\n👤 {author or 'anon'} | ❤️ {likes}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❤️ Полезно", callback_data=f"wiki_like_{aid}")],
+        [InlineKeyboardButton(text="Использовал это решение", callback_data=f"wiki_use_{aid}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="wiki_list")]
     ])
 
@@ -198,6 +199,7 @@ async def callback_wiki_check(callback: types.CallbackQuery):
     text = f"🗒️ <b>Чек-лист: {title}</b>\n\n{checklist}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Открыть решение", callback_data=f"wiki_open_{aid}" )],
+        [InlineKeyboardButton(text="Использовал это решение", callback_data=f"wiki_use_{aid}" )],
         [InlineKeyboardButton(text="❤️ Полезно", callback_data=f"wiki_like_{aid}")]
     ])
 
@@ -207,6 +209,60 @@ async def callback_wiki_check(callback: types.CallbackQuery):
 
 # ─────────────────────────── add article (admin) ───────────────────────────
 
+# HANDLERS: "Использовал это решение" — запись использования статьи
+@router.callback_query(F.data.startswith("wiki_use_"))
+async def callback_wiki_use(callback: types.CallbackQuery):
+    """Пользователь отметил, что использовал статью для решения квеста.
+
+    Ожидаем, что кнопка нажата в ЛС исполнителя (или в контексте квеста). Если вызывается из лички —
+    пытаемся определить текущий task_id через reply_to_message или через последний взятый квест в БД.
+    """
+    from database.db import save_wiki_usage, get_quests_by_worker, get_quest_messages, get_task_by_id
+
+    article_id = int(callback.data.replace("wiki_use_", ""))
+    user_id = callback.from_user.id
+
+    # Попробуем определить task_id: если кнопка нажата в ответ на сообщение квеста — используем reply_to
+    task_id = None
+    try:
+        if callback.message and callback.message.reply_to_message:
+            # Если есть reply_to_message — пытаемся получить task по bot_msg_id
+            bot_msg_id = callback.message.reply_to_message.message_id
+            async with aiosqlite.connect(DB_NAME) as db:
+                async with db.execute('SELECT task_id FROM tasks WHERE bot_msg_id = ?', (bot_msg_id,)) as c:
+                    row = await c.fetchone()
+                    if row:
+                        task_id = row[0]
+    except Exception:
+        pass
+
+    # Если не удалось — ищем последний активный квест этого исполнителя
+    if not task_id:
+        try:
+            # Получаем квесты исполнителя и берём самый последний in_progress
+            async with aiosqlite.connect(DB_NAME) as db:
+                async with db.execute('SELECT task_id FROM tasks WHERE worker_id = ? AND status = "in_progress" ORDER BY task_id DESC LIMIT 1', (user_id,)) as c:
+                    row = await c.fetchone()
+                    if row:
+                        task_id = row[0]
+        except Exception:
+            pass
+
+    if not task_id:
+        await callback.answer("Не удалось определить квест. Откройте квестовое сообщение и нажмите кнопку снова.", show_alert=True)
+        return
+
+    # Сохраняем использование
+    try:
+        await save_wiki_usage(task_id, article_id, user_id)
+        # Увеличим счётчик использования в wiki (необязательно) — тут можно увеличить likes или отдельное поле
+        await callback.answer("✅ Отмечено: статья использована для решения квеста", show_alert=True)
+    except Exception as e:
+        print(f"Error saving wiki usage: {e}")
+        await callback.answer("Ошибка при сохранении использования. Попробуйте позже.", show_alert=True)
+
+
+# FSM-состояния для добавления статьи (ниже)
 # FSM-состояния для добавления статьи
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
