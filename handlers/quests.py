@@ -17,7 +17,7 @@ router = Router()
 # Функция для очистки описания от команд
 def clean_description(text: str) -> str:
     """Очищает описание квеста от ключевых слов команд"""
-    keywords = ["НоваяЗадача", "НовыйКвест", "инцидент"]
+    keywords = ["новаязадача", "новыйквест", "инцидент"]
     text = text.strip()
     
     for keyword in keywords:
@@ -53,15 +53,6 @@ async def create_task(message: types.Message):
         reply_markup=kb
     )
 
-    # Закрепляем сообщение с квестом (тихое закрепление)
-    try:
-        await message.chat.pin_message(
-            message_id=sent_msg.message_id,
-            disable_notification=True  # Закрепление без уведомления
-        )
-    except Exception as e:
-        print(f"Не удалось закрепить сообщение: {e}")
-
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
             'INSERT INTO tasks (chat_id, bot_msg_id, description, category, reward, time) VALUES (?, ?, ?, ?, ?, ?)',
@@ -78,6 +69,34 @@ async def create_task(message: types.Message):
             message_text=f"Создал(а) квест: {task_text}",
             is_reply_to_quest=True
         )
+
+    # Отправляем похожие решения в личные сообщения автору задачи.
+    try:
+        from services.wiki import search_wiki_by_text
+        results = await search_wiki_by_text(task_text, limit=3)
+        if results:
+            lines = ["📚 <b>Похожие решения</b>\n"]
+            for i, (aid, title, content, category, tags, author, likes, created) in enumerate(results, 1):
+                short = content[:130].replace('\n', ' ')
+                lines.append(f"#{i} <b>{title}</b> ({category})")
+                lines.append(f"   {short}...")
+            lines.append("\nЕсли решение не подошло — можешь написать /wiki запрос или добавить новую статью через /wiki_add.")
+            await message.bot.send_message(
+                message.from_user.id,
+                "\n".join(lines),
+                parse_mode="HTML"
+            )
+    except Exception as e:
+        print(f"Не удалось отправить похожие решения в ЛС: {e}")
+
+    # Закрепляем сообщение с квестом (тихое закрепление)
+    try:
+        await message.chat.pin_message(
+            message_id=sent_msg.message_id,
+            disable_notification=True  # Закрепление без уведомления
+        )
+    except Exception as e:
+        print(f"Не удалось закрепить сообщение: {e}")
 
 @router.callback_query(F.data == "take_quest")
 async def process_take_quest(callback: types.CallbackQuery):
@@ -286,13 +305,22 @@ async def finish_quest(message: types.Message):
             InlineKeyboardButton(text="🙅 Нет, не нужно", callback_data=f"no_wiki_{task_id}")
         ]
     ])
-    await message.answer(
-        f"📚 <b>Сохранить решение в базу знаний?</b>\n\n"
-        f"Это поможет другим инженерам быстрее решать похожие задачи.\n"
-        f"За +20 EXP и звание «Архивариус» тимлид добавит статью.\n"
-        f"Нажмите кнопку — и тимлид получит уведомление.",
-        reply_markup=kb_wiki
-    )
+    # Отправляем личное сообщение исполнителю вместо ответа в общем чате
+    try:
+        await message.bot.send_message(
+            message.from_user.id,
+            f"📚 <b>Сохранить решение в базу знаний?</b>\n\n"
+            f"Это поможет другим инженерам быстрее решать похожие задачи.\n"
+            f"За +5 EXP и звание «Архивариус»\n"
+            f"Нажмите кнопку — и тимлид получит уведомление.",
+            reply_markup=kb_wiki
+        )
+    except Exception:
+        # Если не удалось отправить ЛС (например, бот не добавлен в контактах), уведомим в чате
+        await message.answer(
+            "📚 Не удалось отправить личное сообщение. Пожалуйста, начните диалог с ботом или нажмите кнопку здесь:",
+            reply_markup=kb_wiki
+        )
 
 @router.message(F.text.lower().startswith("план на завтра") | F.text.lower().startswith("планы на завтра"))
 async def set_daily_plan(message: types.Message):
@@ -405,22 +433,31 @@ async def callback_save_wiki(callback: types.CallbackQuery, state: FSMContext):
     description, category = task
 
     await callback.message.edit_reply_markup()  # убираем кнопки
-    await callback.answer("✍️ Отправьте текст решения в чат", show_alert=False)
+    await callback.answer("✍️ Отправьте текст решения в личные сообщения боту", show_alert=False)
 
     # Сохраняем task_id и описание в FSM
     await state.update_data(task_id=task_id, description=description, category=category)
     await state.set_state(WikiSaveStates.waiting_for_text)
 
-    await callback.message.answer(
-        f"📚 <b>Добавление в Wiki</b>\n\n"
-        f"Квест #{task_id}: {description[:80]}\n"
-        f"Категория (предложенная): {category}\n\n"
-        f"✍️ Напишите текст решения:\n"
-        f"1. Опишите проблему\n"
-        f"2. Опишите решение пошагово\n"
-        f"3. Укажите важные нюансы\n\n"
-        f"Напишите <code>/wiki_skip</code> чтобы пропустить."
-    )
+    # Отправляем инструкцию в личные сообщения пользователю
+    try:
+        await callback.bot.send_message(
+            callback.from_user.id,
+            f"📚 <b>Добавление в Wiki</b>\n\n"
+            f"Квест #{task_id}: {description[:80]}\n"
+            f"Категория (предложенная): {category}\n\n"
+            f"✍️ Напишите текст решения:\n"
+            f"1. Опишите проблему\n"
+            f"2. Опишите решение пошагово\n"
+            f"3. Укажите важные нюансы\n\n"
+            f"Напишите <code>/wiki_skip</code> чтобы пропустить."
+        )
+    except Exception:
+        # Если не удалось отправить ЛС, отправляем в чат как fallback
+        await callback.message.answer(
+            "📚 Не удалось отправить ЛС. Напишите текст решения в этом чате или начните диалог с ботом.",
+            reply_markup=None
+        )
 
 
 @router.callback_query(F.data.startswith("no_wiki_"))
@@ -483,7 +520,7 @@ async def wiki_save_text(message: types.Message, state: FSMContext):
     )
 
     # Награда за сохранение решения
-    await update_exp(user_id, 20, reason="wiki_add")
+    await update_exp(user_id, 5, reason="wiki_add")
 
     await state.clear()
 
@@ -492,6 +529,6 @@ async def wiki_save_text(message: types.Message, state: FSMContext):
         f"📚 <b>{title}</b>\n"
         f"📂 Категория: {category}\n"
         f"⏳ Статус: на проверке у тимлида\n"
-        f"💰 Награда: +20 EXP\n\n"
+        f"💰 Награда: +5 EXP\n\n"
         f"После проверки тимлида статья появится для всех через <code>/wiki</code>"
     )

@@ -176,7 +176,7 @@ async def callback_wiki_list(callback: types.CallbackQuery):
         ])
     else:
         text += "Пока нет подтверждённых статей.\n\n"
-        text += "Напишите <code>/wiki add</code> чтобы добавить первое решение!"
+        text += "Напишите <code>/wiki_add</code> чтобы добавить первое решение!"
         kb = None
 
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -261,13 +261,13 @@ async def wiki_add_content(message: types.Message, state: FSMContext):
 
     # Награда автору
     from database.db import update_exp
-    await update_exp(message.from_user.id, 20, reason="wiki_add")
+    await update_exp(message.from_user.id, 5, reason="wiki_add")
 
     await message.answer(
         f"✅ Статья добавлена в Wiki!\n\n"
         f"📚 <b>{title}</b>\n"
         f"📂 Категория: {category}\n"
-        f"💰 Награда: +20 EXP (Звание Архивариуса)\n\n"
+        f"💰 Награда: +5 EXP (Звание Архивариуса)\n\n"
         f"Теперь инженеры могут найти это решение через /wiki"
     )
 
