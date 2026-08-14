@@ -45,6 +45,11 @@ async def init_wiki_table():
         await db.execute('CREATE INDEX IF NOT EXISTS idx_wiki_category ON wiki(category)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_wiki_tags ON wiki(tags)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_wiki_verified ON wiki(is_verified)')
+        # Миграция: добавить колонку uses для подсчёта использований статей
+        try:
+            await db.execute('ALTER TABLE wiki ADD COLUMN uses INTEGER DEFAULT 0')
+        except:
+            pass
         await db.commit()
 
 
@@ -80,12 +85,13 @@ async def search_wiki(query: str, limit: int = 5) -> List[Tuple]:
 
     async with aiosqlite.connect(DB_NAME) as db:
         # Ищем по title, content и tags (LIKE с % для частичного совпадения)
+        # Сортируем по использованию (uses), затем лайкам и дате
         async with db.execute('''
             SELECT id, title, content, category, tags, author_name, likes, created_at
             FROM wiki
             WHERE (title LIKE ? OR content LIKE ? OR tags LIKE ?)
               AND is_verified = 1
-            ORDER BY likes DESC, created_at DESC
+            ORDER BY uses DESC, likes DESC, created_at DESC
             LIMIT ?
         ''', (
             f'%{query_clean}%',
@@ -113,12 +119,64 @@ async def get_wiki_article_by_id(article_id: int):
     """Возвращает статью по ID или None."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute('''
-            SELECT id, title, content, category, tags, author_name, likes, created_at
+            SELECT id, title, content, category, tags, author_name, likes, created_at, uses
             FROM wiki
             WHERE id = ?
         ''', (article_id,)) as cursor:
             row = await cursor.fetchone()
             return row
+
+
+async def get_unverified_articles(limit: int = 20) -> List[Tuple]:
+    """Возвращает непроверенные статьи для очереди тимлида."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT id, title, content, category, tags, author_name, likes, created_at, uses
+            FROM wiki
+            WHERE is_verified = 0
+            ORDER BY created_at ASC
+            LIMIT ?
+        ''', (limit,)) as cursor:
+            return await cursor.fetchall()
+
+
+async def approve_wiki_article(article_id: int):
+    """Пометить статью как подтверждённую."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('UPDATE wiki SET is_verified = 1 WHERE id = ?', (article_id,))
+        await db.commit()
+
+
+async def update_wiki_article(article_id: int, title: str = None, content: str = None, category: str = None, tags: str = None, is_verified: int = None):
+    """Обновляет поля статьи. Необязательные поля игнорируются."""
+    fields = []
+    params = []
+    if title is not None:
+        fields.append('title = ?')
+        params.append(title)
+    if content is not None:
+        fields.append('content = ?')
+        params.append(content)
+    if category is not None:
+        fields.append('category = ?')
+        params.append(category)
+    if tags is not None:
+        fields.append('tags = ?')
+        params.append(tags)
+    if is_verified is not None:
+        fields.append('is_verified = ?')
+        params.append(is_verified)
+
+    if not fields:
+        return False
+
+    params.append(article_id)
+    query = f"UPDATE wiki SET {', '.join(fields)} WHERE id = ?"
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(query, tuple(params))
+        await db.commit()
+        return True
 
 
 async def get_all_categories() -> List[str]:

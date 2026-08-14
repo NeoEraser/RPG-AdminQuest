@@ -25,6 +25,9 @@ from services.wiki import (
     suggest_wiki_title,
     save_wiki_article,
     get_wiki_article_by_id,
+    get_unverified_articles,
+    approve_wiki_article,
+    update_wiki_article,
 )
 
 router = Router()
@@ -287,6 +290,105 @@ async def cmd_wiki_add(message: types.Message, state: FSMContext):
         "Шаг 1/3: Введите заголовок статьи.\n"
         "Пример: Как починить замятие бумаги в HP LaserJet"
     )
+
+
+# ─────────────────────────── Review queue (teamlead) ───────────────────────────
+
+@router.message(Command("wiki_review"))
+async def cmd_wiki_review(message: types.Message):
+    """Команда для тимлида: /wiki_review — показать очередь непроверенных статей."""
+    if message.from_user.id != TEAMLEAD_ID:
+        return await message.reply("Доступно только тимлиду.")
+
+    articles = await get_unverified_articles(limit=20)
+    if not articles:
+        return await message.reply("Очередь проверок пуста.")
+
+    lines = ["📝 <b>ОЧЕРЕДЬ НА ПРОВЕРКУ:</b>\n"]
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for (aid, title, content, category, tags, author, likes, created, uses) in articles:
+        short = content[:120].replace('\n', ' ')
+        lines.append(f"#{aid} 📚 <b>{title}</b> — {short}...")
+        # Добавляем кнопки для этой статьи
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(text=f"✅ Одобрить #{aid}", callback_data=f"wiki_approve_{aid}"),
+            InlineKeyboardButton(text=f"❌ Отклонить #{aid}", callback_data=f"wiki_reject_{aid}")
+        ])
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(text=f"✏️ Редактировать #{aid}", callback_data=f"wiki_edit_{aid}")
+        ])
+        kb.inline_keyboard.append([InlineKeyboardButton(text="—", callback_data="noop")])
+
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data == "wiki_review")
+async def callback_wiki_review(callback: types.CallbackQuery):
+    # Поддержка из callback — просто делегируем к команде
+    return await cmd_wiki_review(callback.message)
+
+
+@router.callback_query(F.data.startswith("wiki_approve_"))
+async def callback_wiki_approve(callback: types.CallbackQuery):
+    if callback.from_user.id != TEAMLEAD_ID:
+        return await callback.answer("Только тимлид может подтверждать статьи.", show_alert=True)
+    aid = int(callback.data.replace("wiki_approve_", ""))
+    await approve_wiki_article(aid)
+    await callback.answer("✅ Статья подтверждена и доступна всем.", show_alert=True)
+    try:
+        await callback.message.delete()
+    except:
+        pass
+
+
+@router.callback_query(F.data.startswith("wiki_reject_"))
+async def callback_wiki_reject(callback: types.CallbackQuery):
+    if callback.from_user.id != TEAMLEAD_ID:
+        return await callback.answer("Только тимлид может отклонять статьи.", show_alert=True)
+    aid = int(callback.data.replace("wiki_reject_", ""))
+    # Пометим как отклонённую (is_verified = 2)
+    await update_wiki_article(aid, is_verified=2)
+    await callback.answer("❌ Статья помечена как отклонённая.", show_alert=True)
+    try:
+        await callback.message.delete()
+    except:
+        pass
+
+
+# FSM для редактирования статьи (тимлид)
+class WikiEditStates(StatesGroup):
+    waiting_for_content = State()
+
+
+_wiki_edit_state: dict = {}
+
+
+@router.callback_query(F.data.startswith("wiki_edit_"))
+async def callback_wiki_edit(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id != TEAMLEAD_ID:
+        return await callback.answer("Только тимлид может редактировать статьи.", show_alert=True)
+    aid = int(callback.data.replace("wiki_edit_", ""))
+    # Сохраняем в память
+    _wiki_edit_state[callback.from_user.id] = aid
+    await callback.answer("✏️ Отправьте новый полный текст статьи в этом чате.", show_alert=True)
+    await state.set_state(WikiEditStates.waiting_for_content)
+
+
+@router.message(WikiEditStates.waiting_for_content, F.from_user.id == TEAMLEAD_ID)
+async def wiki_edit_receive(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    if user_id not in _wiki_edit_state:
+        await state.clear()
+        return await message.reply("Нет выбранной статьи для редактирования.")
+    aid = _wiki_edit_state[user_id]
+    new_content = message.text.strip()
+    if len(new_content) < 5:
+        return await message.reply("Текст слишком короткий. Отправьте более развёрнутый текст.")
+    # Обновляем статью и помечаем как подтверждённую
+    await update_wiki_article(aid, content=new_content, is_verified=1)
+    await message.reply(f"✅ Статья #{aid} обновлена и подтверждена.")
+    del _wiki_edit_state[user_id]
+    await state.clear()
 
 
 @router.message(WikiAddStates.waiting_for_title)

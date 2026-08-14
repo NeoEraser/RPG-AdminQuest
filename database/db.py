@@ -266,6 +266,11 @@ async def save_wiki_usage(task_id: int, article_id: int, user_id: int) -> int:
             INSERT INTO quest_wiki_usage (task_id, article_id, user_id) VALUES (?, ?, ?)
         ''', (task_id, article_id, user_id)) as cursor:
             new_id = cursor.lastrowid
+        # Увеличим поле uses в таблице wiki
+        try:
+            await db.execute('UPDATE wiki SET uses = COALESCE(uses, 0) + 1 WHERE id = ?', (article_id,))
+        except Exception:
+            pass
         await db.commit()
     return new_id
 
