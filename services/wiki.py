@@ -208,8 +208,20 @@ async def search_wiki_by_text(text: str, limit: int = 5) -> List[Tuple]:
     return [row for _, row in scored[:limit]]
 
 
-# ─────────────────────────── category matching ───────────────────────────
+async def get_wiki_article_by_id(article_id: int):
+    """Возвращает запись статьи по ID.
+    Формат: (id, title, content, category, tags, author_name, likes, created_at, is_verified)
+    """
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT id, title, content, category, tags, author_name, likes, created_at, is_verified
+            FROM wiki WHERE id = ?
+        ''', (article_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row
 
+
+# ─────────────────────────── category matching ───────────────────────────
 # Используем ту же систему категорий, что и в category_detector
 CATEGORIES = {
     "1С": ["1с", "1c", "один с", "бухгалтер", "бух", "отчет", "конфигурация", "sbis", "упд", "платеж"],

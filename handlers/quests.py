@@ -76,15 +76,22 @@ async def create_task(message: types.Message):
         results = await search_wiki_by_text(task_text, limit=3)
         if results:
             lines = ["📚 <b>Похожие решения</b>\n"]
+            kb = InlineKeyboardMarkup(inline_keyboard=[])
             for i, (aid, title, content, category, tags, author, likes, created) in enumerate(results, 1):
                 short = content[:130].replace('\n', ' ')
                 lines.append(f"#{i} <b>{title}</b> ({category})")
                 lines.append(f"   {short}...")
+                # Добавляем две кнопки: открыть и чек-лист
+                kb.inline_keyboard.append([
+                    InlineKeyboardButton(text=f"Открыть #{i}", callback_data=f"wiki_open_{aid}"),
+                    InlineKeyboardButton(text=f"Чек-лист #{i}", callback_data=f"wiki_check_{aid}")
+                ])
             lines.append("\nЕсли решение не подошло — можешь написать /wiki запрос или добавить новую статью через /wiki_add.")
             await message.bot.send_message(
                 message.from_user.id,
                 "\n".join(lines),
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=kb
             )
     except Exception as e:
         print(f"Не удалось отправить похожие решения в ЛС: {e}")

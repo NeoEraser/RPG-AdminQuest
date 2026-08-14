@@ -17,6 +17,8 @@ from datetime import datetime
 from config import DB_NAME, TEAMLEAD_ID
 from services.wiki import (
     search_wiki,
+    # search_wiki_by_text may exist; import if available
+    get_wiki_article_by_id,
     get_all_categories,
     get_wiki_by_category,
     like_wiki_article,
@@ -192,6 +194,55 @@ async def callback_wiki_like(callback: types.CallbackQuery):
         await callback.answer("❤️ Лайк добавлен!", show_alert=True)
     else:
         await callback.answer("Статья не найдена", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("wiki_open_"))
+async def callback_wiki_open(callback: types.CallbackQuery):
+    """Показать полное решение статьи по ID."""
+    aid = int(callback.data.replace("wiki_open_", ""))
+    article = await get_wiki_article_by_id(aid)
+    if not article:
+        await callback.answer("Статья не найдена", show_alert=True)
+        return
+    _id, title, content, category, tags, author, likes, created, is_verified = article
+    lines = [f"📚 <b>{title}</b>  <i>({category})</i>\n"]
+    lines.append(content)
+    lines.append(f"\n👤 {author or 'anon'} | ❤️ {likes} | {datetime.fromisoformat(created.replace(' ', '+')).strftime('%d.%m.%Y')}")
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❤️ Полезно", callback_data=f"wiki_like_{_id}"),
+         InlineKeyboardButton(text="◀️ Назад", callback_data="wiki_list")]
+    ])
+
+    await callback.message.answer('\n'.join(lines), parse_mode='HTML', reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("wiki_check_"))
+async def callback_wiki_check(callback: types.CallbackQuery):
+    """Показать чек-лист (сокращённый вид) статьи по ID."""
+    aid = int(callback.data.replace("wiki_check_", ""))
+    article = await get_wiki_article_by_id(aid)
+    if not article:
+        await callback.answer("Статья не найдена", show_alert=True)
+        return
+    _id, title, content, category, tags, author, likes, created, is_verified = article
+    # Попробуем вытащить первые 8 строк как чек-лист
+    lines = [f"📋 <b>Чек-лист: {title}</b>\n"]
+    content_lines = content.splitlines()
+    for l in content_lines[:8]:
+        l = l.strip()
+        if not l: continue
+        lines.append(f"• {l[:200]}")
+    lines.append('\nЧтобы увидеть полное решение — нажмите «Открыть решение».')
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Открыть решение", callback_data=f"wiki_open_{_id}"),
+         InlineKeyboardButton(text="❤️ Полезно", callback_data=f"wiki_like_{_id}")]
+    ])
+
+    await callback.message.answer('\n'.join(lines), parse_mode='HTML', reply_markup=kb)
+    await callback.answer()
 
 
 # ─────────────────────────── add article (admin) ───────────────────────────
