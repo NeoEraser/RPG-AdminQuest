@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 async def init_wiki_table():
-    """Создаёт таблицу wiki при старте."""
+    """Создаёт таблицу wiki при старте и выполняет простые миграции """
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute('''
             CREATE TABLE IF NOT EXISTS wiki (
@@ -30,4 +30,15 @@ async def init_wiki_table():
         await db.execute('CREATE INDEX IF NOT EXISTS idx_wiki_category ON wiki(category)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_wiki_tags ON wiki(tags)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_wiki_verified ON wiki(is_verified)')
+
+        # Миграция: добавить колонку uses для подсчёта использований статей
+        try:
+            await db.execute('ALTER TABLE wiki ADD COLUMN uses INTEGER DEFAULT 0')
+        except:
+            pass
+        # Миграция: добавить колонку embedding для хранения JSON-эмбеддинга
+        try:
+            await db.execute('ALTER TABLE wiki ADD COLUMN embedding TEXT')
+        except:
+            pass
         await db.commit()

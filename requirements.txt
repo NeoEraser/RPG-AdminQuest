@@ -3,3 +3,4 @@ aiohttp==3.9.1
 aiosqlite==3.0.1
 apscheduler==3.10.4
 python-dotenv==1.0.0
+sentence-transformers>=2.2.2

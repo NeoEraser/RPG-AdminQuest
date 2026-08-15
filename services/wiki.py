@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────── DB functions ───────────────────────────
 
 async def init_wiki_table():
-    """Создаёт таблицу wiki при старте."""
+    """Создаёт таблицу wiki при старте. Добавляет нужные колонки при миграции."""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute('''
             CREATE TABLE IF NOT EXISTS wiki (
@@ -48,6 +48,11 @@ async def init_wiki_table():
         # Миграция: добавить колонку uses для подсчёта использований статей
         try:
             await db.execute('ALTER TABLE wiki ADD COLUMN uses INTEGER DEFAULT 0')
+        except:
+            pass
+        # Миграция: добавить колонку embedding для хранения JSON-эмбеддинга
+        try:
+            await db.execute('ALTER TABLE wiki ADD COLUMN embedding TEXT')
         except:
             pass
         await db.commit()
@@ -76,27 +81,38 @@ async def save_wiki_article(
 
 async def search_wiki(query: str, limit: int = 5) -> List[Tuple]:
     """
-    Ищет статьи по запросу (title + content + tags).
+    Ищет статьи по запросу.
+    Сначала пытаемся использовать векторный поиск по эмбеддингам (если они есть),
+    иначе откатываемся на LIKE-поиск по title/content/tags.
+
     Возвращает список: (id, title, content, category, tags, author_name, likes, created_at)
     """
-    query_clean = query.lower().strip()
+    query_clean = query.strip()
     if not query_clean:
         return []
 
+    # Попытка векторного поиска (лучше релевантность). Если что-то пойдёт не так — fallback на LIKE.
+    try:
+        from services import wiki_embeddings as wemb
+        results = await wemb.search_similar_articles(query_clean, top_k=limit)
+        if results:
+            return results
+    except Exception:
+        logger.debug("Vector search failed or not available, fallback to LIKE search", exc_info=True)
+
+    q = query_clean.lower()
     async with aiosqlite.connect(DB_NAME) as db:
-        # Ищем по title, content и tags (LIKE с % для частичного совпадения)
-        # Сортируем по использованию (uses), затем лайкам и дате
         async with db.execute('''
             SELECT id, title, content, category, tags, author_name, likes, created_at
             FROM wiki
-            WHERE (title LIKE ? OR content LIKE ? OR tags LIKE ?)
+            WHERE (LOWER(title) LIKE ? OR LOWER(content) LIKE ? OR LOWER(tags) LIKE ?)
               AND is_verified = 1
             ORDER BY uses DESC, likes DESC, created_at DESC
             LIMIT ?
         ''', (
-            f'%{query_clean}%',
-            f'%{query_clean}%',
-            f'%{query_clean}%',
+            f'%{q}%',
+            f'%{q}%',
+            f'%{q}%',
             limit
         )) as cursor:
             return await cursor.fetchall()

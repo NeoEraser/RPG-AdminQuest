@@ -82,6 +82,15 @@ async def main():
     # 1. Инициализация БД
     await init_db()
     await init_wiki_table()
+
+    # Инициализация модели эмбеддингов в фоне (если sentence-transformers установлены)
+    try:
+        from services import wiki_embeddings
+        # Запускаем инициализацию модели неблокирующе
+        asyncio.create_task(wiki_embeddings.init_model())
+        logging.info("🔁 Запущена фоновая инициализация модели эмбеддингов для Wiki")
+    except Exception:
+        logging.exception("Не удалось инициализировать модуль эмбеддингов")
     
     # 2. Инициализируем менеджер прокси
     proxy_manager = ProxyManager(TOKEN)
@@ -130,6 +139,13 @@ async def main():
     scheduler.add_job(reset_monthly_exp, 'cron', day=1, hour=0, minute=0, args=[bot])
     scheduler.add_job(monthly_results_check, 'cron', day='last', hour=12, minute=0, args=[bot, GROUP_ID])
     scheduler.add_job(generate_weekly_report, 'cron', day_of_week='mon', hour=9, minute=30, args=[bot, GROUP_ID])
+    # Переиндексация Wiki раз в сутки в 01:00 — запускает асинхронную функцию reindex_all
+    try:
+        from services import wiki_embeddings
+        scheduler.add_job(wiki_embeddings.reindex_all, 'cron', hour=1, minute=0, id='wiki_reindex', replace_existing=True)
+        logging.info("🔁 Запланирована ежедневная переиндексация Wiki в 01:00")
+    except Exception:
+        logging.exception("Не удалось запланировать задачу переиндексации Wiki (модуль wiki_embeddings недоступен)")
     scheduler.start()
     
     # 9. Проверяем авторизацию бота

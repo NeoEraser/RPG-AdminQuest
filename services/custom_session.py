@@ -42,15 +42,15 @@ class DynamicProxySession(BaseSession):
         if proxy:
             proxy_str, _ = self.proxy_manager._parse_proxy_url(proxy)
             if proxy_str:
+                # Сохраняем выбранный прокси для использования при отдельных запросах
                 self._current_proxy = proxy
-                return ClientSession(
-                    connector=connector,
-                    timeout=timeout,
-                    proxy=proxy_str,
-                    trust_env=False
-                )
+            else:
+                self._current_proxy = None
+        else:
+            self._current_proxy = None
 
-        self._current_proxy = None
+        # aiohttp.ClientSession не принимает аргумент `proxy` в конструкторе.
+        # Прокси нужно передавать в вызовах session.get/post через параметр proxy.
         return ClientSession(
             connector=connector,
             timeout=timeout,
@@ -232,11 +232,19 @@ class DynamicProxySession(BaseSession):
                 http_method = kwargs.get('http_method', 'POST')
 
                 if http_method.upper() == 'GET':
-                    async with session.get(url, params=serialized_payload) as response:
-                        response_data = await response.json()
+                    if self._current_proxy:
+                        async with session.get(url, params=serialized_payload, proxy=self._current_proxy) as response:
+                            response_data = await response.json()
+                    else:
+                        async with session.get(url, params=serialized_payload) as response:
+                            response_data = await response.json()
                 else:
-                    async with session.post(url, json=serialized_payload) as response:
-                        response_data = await response.json()
+                    if self._current_proxy:
+                        async with session.post(url, json=serialized_payload, proxy=self._current_proxy) as response:
+                            response_data = await response.json()
+                    else:
+                        async with session.post(url, json=serialized_payload) as response:
+                            response_data = await response.json()
 
                 self._consecutive_failures = 0
 
@@ -317,15 +325,27 @@ class DynamicProxySession(BaseSession):
                 connector = TCPConnector(ssl=False, enable_cleanup_closed=True)
                 temp_timeout = ClientTimeout(total=timeout)
                 async with ClientSession(connector=connector, timeout=temp_timeout) as temp_session:
-                    async with temp_session.get(url, headers=headers) as response:
+                    if self._current_proxy:
+                        async with temp_session.get(url, headers=headers, proxy=self._current_proxy) as response:
+                            response.raise_for_status()
+                            async for chunk in response.content.iter_chunked(chunk_size):
+                                yield chunk
+                    else:
+                        async with temp_session.get(url, headers=headers) as response:
+                            response.raise_for_status()
+                            async for chunk in response.content.iter_chunked(chunk_size):
+                                yield chunk
+            else:
+                if self._current_proxy:
+                    async with session.get(url, headers=headers, proxy=self._current_proxy) as response:
                         response.raise_for_status()
                         async for chunk in response.content.iter_chunked(chunk_size):
                             yield chunk
-            else:
-                async with session.get(url, headers=headers) as response:
-                    response.raise_for_status()
-                    async for chunk in response.content.iter_chunked(chunk_size):
-                        yield chunk
+                else:
+                    async with session.get(url, headers=headers) as response:
+                        response.raise_for_status()
+                        async for chunk in response.content.iter_chunked(chunk_size):
+                            yield chunk
         except Exception as e:
             logger.error(f"❌ Ошибка потоковой загрузки: {e}")
             raise

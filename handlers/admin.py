@@ -73,3 +73,24 @@ async def callback_weekly_report(callback: types.CallbackQuery):
         logger = __import__('logging').getLogger(__name__)
         logger.error(f"Ошибка генерации отчёта: {e}", exc_info=True)
 
+
+@router.message(Command("reindex_now"), F.from_user.id == TEAMLEAD_ID)
+async def cmd_reindex_now(message: types.Message):
+    """Ручной запуск переиндексации Wiki — доступен только тимлиду."""
+    try:
+        from services import wiki_embeddings
+    except Exception:
+        await message.answer("❌ Модуль wiki_embeddings недоступен на сервере. Переиндексация невозможна.")
+        return
+
+    await message.answer("⏳ Запускаю переиндексацию Wiki. Это может занять время. Уведомлю, когда закончу.")
+    try:
+        result = await wiki_embeddings.reindex_all()
+        total = result.get('total', 0)
+        updated = result.get('updated', 0)
+        failed = result.get('failed', 0)
+        await message.answer(f"✅ Переиндексация завершена. Всего статей: {total}. Обновлено: {updated}. Ошибок: {failed}.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при переиндексации: {e}")
+        logger = __import__('logging').getLogger(__name__)
+        logger.exception(f"Ошибка ручной переиндексации: {e}")
