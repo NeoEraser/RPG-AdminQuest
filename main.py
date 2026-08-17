@@ -141,11 +141,12 @@ async def main():
     scheduler.add_job(generate_weekly_report, 'cron', day_of_week='mon', hour=9, minute=30, args=[bot, GROUP_ID])
     # Переиндексация Wiki раз в сутки в 01:00 — запускает асинхронную функцию reindex_all
     try:
-        from services import wiki_embeddings
-        scheduler.add_job(wiki_embeddings.reindex_all, 'cron', hour=1, minute=0, id='wiki_reindex', replace_existing=True)
-        logging.info("🔁 Запланирована ежедневная переиндексация Wiki в 01:00")
+        # Запланировать запуск внешнего скрипта переиндексации в отдельном venv
+        from services import external_reindex
+        scheduler.add_job(external_reindex.run_reindex_job, 'cron', hour=1, minute=0, args=[bot], id='wiki_reindex', replace_existing=True)
+        logging.info("🔁 Запланирована ежедневная внешняя переиндексация Wiki в 01:00 (external venv)")
     except Exception:
-        logging.exception("Не удалось запланировать задачу переиндексации Wiki (модуль wiki_embeddings недоступен)")
+        logging.exception("Не удалось запланировать внешнюю задачу переиндексации Wiki")
     scheduler.start()
     
     # 9. Проверяем авторизацию бота

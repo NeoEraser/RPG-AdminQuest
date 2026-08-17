@@ -226,7 +226,7 @@ async def generate_weekly_report(bot=None, chat_id: int = None, ref_date: dateti
     Returns:
         str — текст отчёта.
     """
-    week_mon, week_sun = _week_range(ref_date)
+    week_mon, week_sun = _week_range(ref_date - timedelta(days=7))
 
     logger.info(f"📊 Генерация отчёта за неделю {week_mon.isoformat()} — {week_sun.isoformat()}")
 

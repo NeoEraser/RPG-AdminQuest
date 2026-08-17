@@ -78,19 +78,21 @@ async def callback_weekly_report(callback: types.CallbackQuery):
 async def cmd_reindex_now(message: types.Message):
     """Ручной запуск переиндексации Wiki — доступен только тимлиду."""
     try:
-        from services import wiki_embeddings
+        # Предпочитаем запуск внешнего reindex в отдельном venv
+        from services import external_reindex
     except Exception:
-        await message.answer("❌ Модуль wiki_embeddings недоступен на сервере. Переиндексация невозможна.")
+        await message.answer("❌ Модуль external_reindex недоступен на сервере. Переиндексация невозможна.")
         return
 
-    await message.answer("⏳ Запускаю переиндексацию Wiki. Это может занять время. Уведомлю, когда закончу.")
+    await message.answer("⏳ Запускаю внешнюю переиндексацию Wiki (в отдельном venv). Это может занять время. Уведомлю, когда закончу.")
     try:
-        result = await wiki_embeddings.reindex_all()
-        total = result.get('total', 0)
-        updated = result.get('updated', 0)
-        failed = result.get('failed', 0)
-        await message.answer(f"✅ Переиндексация завершена. Всего статей: {total}. Обновлено: {updated}. Ошибок: {failed}.")
+        res = await external_reindex.run_reindex_external(bot=message.bot, notify_chat_id=message.from_user.id)
+        rc = res.get('rc', -1)
+        if rc == 0:
+            await message.answer("✅ Внешняя переиндексация запущена и завершилась успешно (см уведомление).")
+        else:
+            await message.answer(f"❌ Внешняя переиндексация завершилась с кодом {rc}. См логи для деталей.")
     except Exception as e:
-        await message.answer(f"❌ Ошибка при переиндексации: {e}")
+        await message.answer(f"❌ Ошибка при запуске внешней переиндексации: {e}")
         logger = __import__('logging').getLogger(__name__)
-        logger.exception(f"Ошибка ручной переиндексации: {e}")
+        logger.exception(f"Ошибка ручной внешней переиндексации: {e}")

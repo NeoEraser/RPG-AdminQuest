@@ -19,9 +19,18 @@ async def main():
         logging.exception('Не удалось выполнить миграцию таблицы wiki')
 
     from services import wiki_embeddings
-    logging.info('Start reindex all verified wiki articles...')
-    await wiki_embeddings.reindex_all()
-    logging.info('Reindex finished')
+    
+    # Инициализируем модель перед началом индексации
+    logging.info('Инициализация модели эмбеддингов...')
+    await wiki_embeddings.init_model()
+    
+    logging.info('Начинаем переиндексацию подтвержденных статей Wiki...')
+    result = await wiki_embeddings.reindex_all()
+    logging.info(f'Переиндексация завершена: {result}')
+
+    # Проверим, что было проиндексировано
+    if result["updated"] == 0 and result["total"] > 0:
+        logging.warning("Не удалось проиндексировать ни одной статьи! Проверьте логи выше.")
 
 if __name__ == '__main__':
     asyncio.run(main())

@@ -1,5 +1,6 @@
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram import Bot
 import aiosqlite
 from datetime import datetime, timedelta
 from config import DB_NAME
@@ -78,7 +79,7 @@ async def create_task(message: types.Message):
         )
 
 @router.callback_query(F.data == "take_quest")
-async def process_take_quest(callback: types.CallbackQuery):
+async def process_take_quest(callback: types.CallbackQuery, bot: Bot):
     # Проверяем, что пользователь зарегистрирован и согласился с правилами
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute('SELECT exp, agreed_to_tos FROM users WHERE user_id = ?', (callback.from_user.id,)) as cursor:
@@ -150,7 +151,7 @@ async def process_take_quest(callback: types.CallbackQuery):
                     ])
                 text = "\n".join(lines)
                 try:
-                    await callback.bot.send_message(user_id, text, parse_mode="HTML", reply_markup=kb_suggestions)
+                    await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=kb_suggestions)
                 except Exception:
                     # если не удалось отправить в ЛС — уведомим исполнителя в чате (без содержимого)
                     await callback.answer("Не удалось отправить ЛС. Откройте диалог с ботом, чтобы получать подсказки.", show_alert=True)
@@ -241,7 +242,7 @@ async def process_postpone_quest(callback: types.CallbackQuery):
     await update_activity(user_id)
     
 @router.message(F.reply_to_message, F.text.lower().startswith("готово"))
-async def finish_quest(message: types.Message):
+async def finish_quest(message: types.Message, bot: Bot):
     reply_msg = message.reply_to_message
     user_id = message.from_user.id
     report_text = message.text[6:].strip()
@@ -310,10 +311,11 @@ async def finish_quest(message: types.Message):
             InlineKeyboardButton(text="🙅 Нет, не нужно", callback_data=f"no_wiki_{task_id}")
         ]
     ])
-    await message.answer(
+    await bot.send_message(
+        user_id,
         f"📚 <b>Сохранить решение в базу знаний?</b>\n\n"
         f"Это поможет другим инженерам быстрее решать похожие задачи.\n"
-        f"За +20 EXP и звание «Архивариус» тимлид добавит статью.\n"
+        f"За +5 EXP и звание «Архивариус» тимлид добавит статью.\n"
         f"Нажмите кнопку — и тимлид получит уведомление.",
         reply_markup=kb_wiki
     )
@@ -427,14 +429,14 @@ async def callback_save_wiki(callback: types.CallbackQuery):
     await callback.answer("✍️ Отправьте текст решения в чат", show_alert=False)
 
     # Сохраняем task_id в FSM
-    state = callback.bot.user  # это не FSM, используем временное хранилище
+    #state = callback.bot.user  # это не FSM, используем временное хранилище
     # Для простоты используем callback data - но нам нужно FSM
     # Используем простую структуру: сохраняем данные и ждём ввод
 
     # Сохраняем task_id и описание в "временную память" через callback
     # Используем подход: запоминаем task_id в user_pages (уже есть в quest_manager)
     # Или просто используем отдельный словарь
-    global _wiki_input_state
+    #global _wiki_input_state
     _wiki_input_state[callback.from_user.id] = {
         "task_id": task_id,
         "description": description,
@@ -513,7 +515,7 @@ async def wiki_input_handler(message: types.Message):
     )
 
     # Награда за сохранение решения
-    await update_exp(user_id, 20, reason="wiki_add")
+    await update_exp(user_id, 5, reason="wiki_add")
 
     del _wiki_input_state[user_id]
 
@@ -522,6 +524,6 @@ async def wiki_input_handler(message: types.Message):
         f"📚 <b>{title}</b>\n"
         f"📂 Категория: {category}\n"
         f"⏳ Статус: на проверке у тимлида\n"
-        f"💰 Награда: +20 EXP\n\n"
+        f"💰 Награда: +5 EXP\n\n"
         f"После проверки тимлида статья появится для всех через <code>/wiki</code>"
     )
