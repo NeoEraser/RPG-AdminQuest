@@ -502,7 +502,7 @@ async def wiki_input_handler(message: types.Message):
     from services.wiki import save_wiki_article, suggest_wiki_category
     from database.db import update_exp
 
-    title = suggest_wiki_title(state_data["description"])
+    title = suggest_wiki_category(state_data["description"])
     category = state_data.get("category", "Other")
 
     article_id = await save_wiki_article(
