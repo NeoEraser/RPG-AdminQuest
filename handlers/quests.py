@@ -1,9 +1,10 @@
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
 from aiogram import Bot
 import aiosqlite
 from datetime import datetime, timedelta
-from config import DB_NAME
+from config import DB_NAME, TEAMLEAD_ID
 from database.db import update_exp, update_activity, save_timeout, remove_timeout, save_quest_message, increment_postponements, update_timeout
 from services.scheduler import scheduler, quest_timeout_check
 from services.api import update_telegram_tag
@@ -12,6 +13,97 @@ from services.category_detector import detect_category, format_category_tag
 from services.wiki import search_wiki
 
 router = Router()
+
+# ─────────────────────────── Отмена квеста ───────────────────────────
+
+@router.message(Command("cancel"))
+async def cancel_quest(message: types.Message, bot: Bot):
+    """Отмена квеста: реплай на сообщение квеста удаляет его и меняет статус в БД. Только тимлид."""
+    # ── проверка: только тимлид ──
+    if message.from_user.id != TEAMLEAD_ID:
+        return await message.answer("⛔ Только тимлид может отменять квесты.")
+    
+    reply_msg = message.reply_to_message
+    if not reply_msg or not reply_msg.text:
+        return await message.answer("Нужно ответить на сообщение квеста!")
+
+    user_id = message.from_user.id
+    task_text = reply_msg.text
+
+    # Проверяем, что это сообщение квеста (есть кнопка "Взять квест" или текст с "НОВЫЙ КВЕСТ")
+    if "НОВЫЙ КВЕСТ" not in task_text and "НОВЫЙ КВЕСТ (ПОВТОРНО)" not in task_text:
+        return await message.answer("Нужно ответить на сообщение с квестом.")
+
+    # Получаем task_id по bot_msg_id
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            'SELECT task_id, status, description, reward, time, chat_id, bot_msg_id FROM tasks WHERE bot_msg_id = ?',
+            (reply_msg.message_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        if not row:
+            return await message.answer("Квест не найден в базе.")
+
+        task_id, status, description, reward, time_hours, chat_id, bot_msg_id = row
+
+        if status == "completed":
+            return await message.answer("Этот квест уже завершён.")
+
+        if status == "canceled":
+            return await message.answer("Этот квест уже отменён.")
+
+        # Если квест взят — возвращаем в open
+        if status == "in_progress":
+            await db.execute(
+                'UPDATE tasks SET status = "open", worker_id = NULL, start_time = NULL WHERE task_id = ?',
+                (task_id,)
+            )
+        else:
+            await db.execute('UPDATE tasks SET status = "canceled" WHERE task_id = ?', (task_id,))
+            try:
+                await reply_msg.delete()
+            except Exception:
+                pass
+
+        # Удаляем таймаут если есть
+        try:
+            await db.execute('DELETE FROM task_timeouts WHERE bot_msg_id = ?', (bot_msg_id,))
+        except Exception:
+            pass
+
+        # Удаляем задачу из планировщика
+        try:
+            scheduler.remove_job(f"quest_timeout_{bot_msg_id}")
+        except Exception:
+            pass
+
+        # Удаляем историю сообщений квеста
+        await db.execute('DELETE FROM quest_messages WHERE task_id = ?', (task_id,))
+
+        await db.commit()
+    
+
+    
+    # Обновляем сообщение в чате (если не удалили выше)
+    if "НОВЫЙ КВЕСТ" in task_text:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Взять квест", callback_data="take_quest")]])
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=bot_msg_id,
+                text=f"📜 <b>НОВЫЙ КВЕСТ</b>\n\n<b>Суть:</b> {description}\n\n<b>Награда:</b> +{reward} EXP\n<b>Время:</b> {time_hours} часа\n\n⚠️ <i>Принудительное освобождение от исполнителя</i>",
+                reply_markup=kb,
+            )
+        except Exception:
+            pass
+
+    await message.answer(
+        f"✅ Квест #{task_id} отменён и удалён из чата."
+        if status != "in_progress"
+        else f"✅ Квест #<a href='https://t.me/c/{abs(int(str(chat_id)[2:]))}/{bot_msg_id}'>{task_id}</a> отменён и возвращён в статус «Доступен»."
+    )
+
 
 # Функция для очистки описания от команд
 def clean_description(text: str) -> str:
@@ -527,3 +619,5 @@ async def wiki_input_handler(message: types.Message):
         f"💰 Награда: +5 EXP\n\n"
         f"После проверки тимлида статья появится для всех через <code>/wiki</code>"
     )
+
+

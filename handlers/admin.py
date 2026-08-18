@@ -96,3 +96,4 @@ async def cmd_reindex_now(message: types.Message):
         await message.answer(f"❌ Ошибка при запуске внешней переиндексации: {e}")
         logger = __import__('logging').getLogger(__name__)
         logger.exception(f"Ошибка ручной внешней переиндексации: {e}")
+
