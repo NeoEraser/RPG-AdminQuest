@@ -239,7 +239,7 @@ async def list_active_quests(message: types.Message):
     if open_quests:
         text += "🟢 <b>ДОСТУПНЫЕ КВЕСТЫ (open)</b>\n"
         for bot_msg_id, chat_id, description in open_quests:
-            chat_link = f"https://t.me/c/{abs(int(str(chat_id)[2:]))}/52/{bot_msg_id}"
+            chat_link = f"https://t.me/c/{abs(int(str(chat_id)[2:]))}/{bot_msg_id}"
             short_desc = description[:100] + "..." if len(description) > 40 else description
             text += f"• <a href='{chat_link}'>{short_desc}</a>\n"
         text += "\n"
@@ -248,7 +248,7 @@ async def list_active_quests(message: types.Message):
     if in_progress_quests:
         text += "🟡 <b>КВЕСТЫ В РАБОТЕ (in_progress)</b>\n"
         for bot_msg_id, chat_id, description, worker_name, worker_id in in_progress_quests:
-            chat_link = f"https://t.me/c/{abs(int(str(chat_id)[2:]))}/52/{bot_msg_id}"
+            chat_link = f"https://t.me/c/{abs(int(str(chat_id)[2:]))}/{bot_msg_id}"
             short_desc = description[:100] + "..." if len(description) > 40 else description
             worker_display = worker_name or f"ID:{worker_id}"
             text += f"• <a href='{chat_link}'>{short_desc}</a> — <i>исп. {worker_display}</i>\n"
@@ -270,7 +270,7 @@ async def cmd_help(message: types.Message):
         "🔍 <code>/wiki запрос</code> — Поиск решений в базе знаний\n"
         "   Пример: <code>/wiki принтер замятие</code>\n"
         "📂 <code>/wiki</code> — Список всех категорий\n"
-        "💾 При сдаче квеста — предложение сохранить решение (+20 EXP)\n\n"
+        "💾 При сдаче квеста — предложение сохранить решение (5 EXP)\n\n"
 
         "<b>👮 КОМАНДЫ ДИРЕКТОРА (TEAMLEAD):</b>\n"
         "🔴 /dashboard — Live Status: кто чем занят прямо сейчас\n"

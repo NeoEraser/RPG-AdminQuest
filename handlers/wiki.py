@@ -67,7 +67,7 @@ async def cmd_wiki(message: types.Message):
     for i, (aid, title, content, category, tags, author, likes, created) in enumerate(results, 1):
         kb.inline_keyboard.append([
             InlineKeyboardButton(text=f"#{i} ❤️", callback_data=f"wiki_like_{aid}"),
-            InlineKeyboardButton(text="🔗", url=f"tg://resolve?domain={message.from_user.username or 'user'}")
+            InlineKeyboardButton(text="🔗 Открыть", callback_data=f"wiki_open_{aid}")
         ])
 
     # Фрагмент текста для отправки
@@ -172,7 +172,7 @@ async def callback_wiki_open(callback: types.CallbackQuery):
     article = await get_wiki_article_by_id(article_id)
     if not article:
         return await callback.answer("Статья не найдена", show_alert=True)
-    aid, title, content, category, tags, author, likes, created = article
+    aid, title, content, category, tags, author, likes, created, user = article
 
     text = f"📚 <b>{title}</b> <i>({category})</i>\n\n{content}\n\n👤 {author or 'anon'} | ❤️ {likes}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -193,7 +193,7 @@ async def callback_wiki_check(callback: types.CallbackQuery):
     article = await get_wiki_article_by_id(article_id)
     if not article:
         return await callback.answer("Статья не найдена", show_alert=True)
-    aid, title, content, category, tags, author, likes, created = article
+    aid, title, content, category, tags, author, likes, created, user = article
 
     # Берём первые 8 непустых строк как чек-лист
     lines = [l.strip() for l in content.splitlines() if l.strip()]
@@ -430,13 +430,13 @@ async def wiki_add_content(message: types.Message, state: FSMContext):
 
     # Награда автору
     from database.db import update_exp
-    await update_exp(message.from_user.id, 20, reason="wiki_add")
+    await update_exp(message.from_user.id, 5, reason="wiki_add")
 
     await message.answer(
         f"✅ Статья добавлена в Wiki!\n\n"
         f"📚 <b>{title}</b>\n"
         f"📂 Категория: {category}\n"
-        f"💰 Награда: +20 EXP (Звание Архивариуса)\n\n"
+        f"💰 Награда: +5 EXP\n\n"
         f"Теперь инженеры могут найти это решение через /wiki"
     )
 
