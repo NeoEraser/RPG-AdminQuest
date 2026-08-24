@@ -83,12 +83,14 @@ async def main():
     await init_db()
     await init_wiki_table()
 
-    # Инициализация модели эмбеддингов в фоне (если sentence-transformers установлены)
+    # Инициализация модели эмбеддингов (если sentence-transformers установлены)
     try:
         from services import wiki_embeddings
-        # Запускаем инициализацию модели неблокирующе
-        asyncio.create_task(wiki_embeddings.init_model())
-        logging.info("🔁 Запущена фоновая инициализация модели эмбеддингов для Wiki")
+        await wiki_embeddings.init_model()
+        if wiki_embeddings._model_available and wiki_embeddings._model is not None:
+            logging.info("✅ Модель эмбеддингов для Wiki загружена")
+        else:
+            logging.warning("⚠️ Модель эмбеддингов недоступна, будет использоваться LIKE-поиск")
     except Exception:
         logging.exception("Не удалось инициализировать модуль эмбеддингов")
     

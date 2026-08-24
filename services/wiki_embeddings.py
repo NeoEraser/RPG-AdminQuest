@@ -76,7 +76,7 @@ async def embed_text(text: str) -> List[float]:
     loop = asyncio.get_running_loop()
 
     def _encode(t):
-        return _model.encode(t, show_progress_bar=False)
+        return _model.encode(t, show_progress_bar=True)
 
     vec = await loop.run_in_executor(None, _encode, text)
     # convert numpy array to list
@@ -156,7 +156,10 @@ async def search_similar_articles(query: str, top_k: int = 5) -> List[Tuple]:
     if not query:
         return []
 
-    if not _model_available:
+    # Гарантируем, что модель инициализирована
+    _ensure_model()
+
+    if not _model_available or _model is None:
         logger.debug("search_similar_articles: модель эмбеддингов недоступна, возвращаю пустой список")
         return []
 

@@ -420,10 +420,10 @@ async def set_daily_plan(message: types.Message):
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute('UPDATE users SET plan_submitted = 1 WHERE user_id = ?', (message.from_user.id,))
             await db.commit()
-            
         await update_exp(message.from_user.id, 1, reason="plan")
             
         await message.reply("🌙 Лучше поздно, чем никогда! Реабилитирован!")
+        
     elif current_hour < 12:  # с 00:01 до 12:00
         await message.reply("☀️ Боец, так дело не пойдет, завтра уже наступило!")
     else:  # с 12:00 до 18:00
@@ -600,8 +600,9 @@ async def wiki_input_handler(message: types.Message):
     from services.wiki import save_wiki_article, suggest_wiki_category
     from database.db import update_exp
 
-    title = suggest_wiki_category(state_data["description"])
-    category = state_data.get("category", "Other")
+    #title = suggest_wiki_category(state_data["description"])
+    title = state_data.get("description")
+    category = suggest_wiki_category(text + " " + title)
 
     article_id = await save_wiki_article(
         title=title,
