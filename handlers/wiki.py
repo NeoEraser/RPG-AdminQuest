@@ -317,7 +317,6 @@ async def cmd_wiki_review(message: types.Message):
         kb.inline_keyboard.append([
             InlineKeyboardButton(text=f"✏️ Редактировать #{aid}", callback_data=f"wiki_edit_{aid}")
         ])
-        kb.inline_keyboard.append([InlineKeyboardButton(text="—", callback_data="noop")])
 
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
 

@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -105,7 +105,31 @@ async def main():
     session = DynamicProxySession(proxy_manager=proxy_manager)
     default_properties = DefaultBotProperties(parse_mode=ParseMode.HTML, protect_content=False)
     bot = Bot(token=TOKEN, session=session, default=default_properties)
-    
+
+    # 4.1. Настраиваем командное меню (показывается при вводе /)
+    await bot.set_my_commands([
+        # Основные
+        types.BotCommand(command="start", description="Начать игру и принять условия"),
+        types.BotCommand(command="profile", description="Твой уровень, опыт, прогресс"),
+        types.BotCommand(command="top", description="Доска почета: топ месяца и легенды"),
+        types.BotCommand(command="quests", description="Список активных квестов"),
+        types.BotCommand(command="quests_list", description="Полный список квестов с фильтрами"),
+        types.BotCommand(command="help", description="Справка по всем командам"),
+        # Wiki
+        types.BotCommand(command="wiki", description="Открыть базу знаний Wiki"),
+        types.BotCommand(command="wiki_add", description="Добавить статью в Wiki (тимлид)"),
+        types.BotCommand(command="wiki_review", description="Проверить новые статьи (тимлид)"),
+        types.BotCommand(command="wiki_cancel", description="Отменить добавление статьи"),
+        # Квесты
+        types.BotCommand(command="cancel", description="Отменить текущее действие"),
+        # Тимлид
+        types.BotCommand(command="dashboard", description="Live Status: кто чем занят"),
+        types.BotCommand(command="smite", description="Штраф игрока (-EXP) (тимлид)"),
+        types.BotCommand(command="vacation", description="Отпуск игрока (тимлид)"),
+        types.BotCommand(command="reindex_now", description="Переиндексация Wiki (тимлид)"),
+    ])
+    logging.info("✅ Командное меню настроено")
+
     # 5. Инициализация API обертки
     api.api_wrapper = api.BotAPIMethods(bot, proxy_manager)
     api.proxy_manager = proxy_manager

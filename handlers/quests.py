@@ -417,9 +417,9 @@ async def set_daily_plan(message: types.Message):
     current_hour = datetime.now().hour
     
     if current_hour >= 18:  # с 18:00 до 24:00
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute('UPDATE users SET plan_submitted = 1 WHERE user_id = ?', (message.from_user.id,))
-            await db.commit()
+        # async with aiosqlite.connect(DB_NAME) as db:
+        #     await db.execute('UPDATE users SET plan_submitted = 1 WHERE user_id = ?', (message.from_user.id,))
+        #     await db.commit()
         await update_exp(message.from_user.id, 1, reason="plan")
             
         await message.reply("🌙 Лучше поздно, чем никогда! Реабилитирован!")
