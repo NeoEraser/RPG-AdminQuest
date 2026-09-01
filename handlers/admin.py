@@ -62,11 +62,14 @@ async def cmd_dashboard(message: types.Message):
 async def callback_weekly_report(callback: types.CallbackQuery):
     """Ручная генерация еженедельного отчёта по кнопке."""
     from services.weekly_report import generate_weekly_report
+    
     await callback.answer("⏳ Генерирую отчёт...", show_alert=False)
     try:
-        report = await generate_weekly_report(
+        report_text, html_content = await generate_weekly_report(
             bot=callback.bot,
-            chat_id=callback.message.chat.id
+            chat_id=callback.message.chat.id,
+            send_txt=True,      # Отправляем текстовую версию
+            send_html=True      # Отправляем HTML-версию как файл
         )
     except Exception as e:
         await callback.answer(f"❌ Ошибка: {e}", show_alert=True)

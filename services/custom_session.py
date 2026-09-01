@@ -218,6 +218,32 @@ class DynamicProxySession(BaseSession):
             elif payload and isinstance(payload.get('parse_mode'), Default):
                 payload['parse_mode'] = 'HTML'
 
+        # Проверяем, есть ли файлы в payload
+        has_file = False
+        file_data = None
+        file_field = None
+
+        if payload:
+            for key, value in payload.items():
+                # Проверяем на FSInputFile
+                if hasattr(value, 'read') or hasattr(value, '__class__') and 'InputFile' in str(value.__class__):
+                    has_file = True
+                    file_data = value
+                    file_field = key
+                    break
+                # Проверяем на BufferedInputFile
+                if hasattr(value, 'data') and hasattr(value, 'filename'):
+                    has_file = True
+                    file_data = value
+                    file_field = key
+                    break
+
+        # Если есть файл, используем multipart/form-data
+        if has_file and file_data and file_field:
+            return await self._make_request_with_file(
+                bot, real_method, payload, file_field, file_data, **kwargs
+            )
+
         cleaned_payload = self._clean_payload(payload)
         serialized_payload = self._serialize_value(cleaned_payload) if cleaned_payload else None
 
@@ -308,6 +334,158 @@ class DynamicProxySession(BaseSession):
                 raise
 
         raise Exception("Все попытки запроса исчерпаны")
+
+
+
+    async def _make_request_with_file(
+        self,
+        bot: Any,
+        method: str,
+        payload: Dict[str, Any],
+        file_field: str,
+        file_data: Any,
+        **kwargs
+    ) -> Any:
+        """Выполняет запрос с файлом через multipart/form-data"""
+        
+        total_attempts = 0
+        max_total_attempts = 20
+        
+        while total_attempts < max_total_attempts:
+            try:
+                session = await self._ensure_session()
+                
+                url = f"https://api.telegram.org/bot{bot.token}/{method}"
+                
+                # Создаём multipart/form-data
+                from aiohttp import FormData
+                
+                form = FormData()
+                
+                # Добавляем все поля, кроме файла
+                for key, value in payload.items():
+                    if key != file_field and value is not None and not isinstance(value, Default):
+                        if isinstance(value, bool):
+                            form.add_field(key, str(value).lower())
+                        elif isinstance(value, (int, float, str)):
+                            form.add_field(key, str(value))
+                        elif isinstance(value, list):
+                            import json
+                            form.add_field(key, json.dumps(value))
+                        elif hasattr(value, '__class__') and 'InputFile' in str(value.__class__):
+                            # Это файл, пропускаем
+                            continue
+                        else:
+                            try:
+                                form.add_field(key, str(value))
+                            except:
+                                pass
+                
+                # Добавляем файл
+                if hasattr(file_data, 'read'):
+                    # Это FSInputFile или подобный объект
+                    filename = getattr(file_data, 'filename', 'file')
+                    
+                    # Проверяем, может ли это быть FSInputFile с путём
+                    if hasattr(file_data, 'file_path') and file_data.file_path:
+                        # Открываем файл и читаем
+                        with open(file_data.file_path, 'rb') as f:
+                            file_content = f.read()
+                        form.add_field(
+                            file_field,
+                            file_content,
+                            filename=filename,
+                            content_type='text/html'
+                        )
+                    else:
+                        # Пытаемся прочитать содержимое
+                        try:
+                            content = file_data.read()
+                            if hasattr(content, 'decode'):
+                                content = content.encode('utf-8')
+                            form.add_field(
+                                file_field,
+                                content,
+                                filename=filename,
+                                content_type='text/html'
+                            )
+                        except:
+                            # Если не удалось прочитать, передаём как есть
+                            form.add_field(file_field, file_data, filename=filename)
+                else:
+                    # Это BufferedInputFile или подобный
+                    filename = getattr(file_data, 'filename', 'file')
+                    content = getattr(file_data, 'data', b'')
+                    if isinstance(content, str):
+                        content = content.encode('utf-8')
+                    form.add_field(
+                        file_field,
+                        content,
+                        filename=filename,
+                        content_type='text/html'
+                    )
+                
+                # Отправляем запрос с прокси
+                if self._current_proxy:
+                    async with session.post(url, data=form, proxy=self._current_proxy) as response:
+                        response_data = await response.json()
+                else:
+                    async with session.post(url, data=form) as response:
+                        response_data = await response.json()
+                
+                self._consecutive_failures = 0
+                
+                if response_data.get('ok'):
+                    result = response_data.get('result')
+                    return self._convert_result(result, method)
+                
+                error_code = response_data.get('error_code')
+                if error_code == 429:
+                    retry_after = response_data.get('parameters', {}).get('retry_after', 5)
+                    await asyncio.sleep(retry_after + 1)
+                    continue
+                
+                if error_code == 404:
+                    continue
+                
+                from aiogram.exceptions import TelegramAPIError
+                raise TelegramAPIError(
+                    message=f"Error {error_code}: {response_data.get('description', 'Unknown error')}",
+                    method=method
+                )
+                
+            except Exception as e:
+                total_attempts += 1
+                error_str = str(e).lower()
+                
+                is_network_error = any(kw in error_str for kw in [
+                    'cannot connect', 'timeout', 'connection', 'network',
+                    'ssl', 'proxy', 'dns', 'connector', 'clientconnectorerror',
+                    'connectionerror', 'connecterror', 'connectionrefused'
+                ])
+                
+                if is_network_error:
+                    self._consecutive_failures += 1
+                    
+                    if self._session and not self._session.closed:
+                        await self._session.close()
+                        self._session = None
+                    
+                    if self._consecutive_failures >= self._max_consecutive_failures:
+                        await self._reload_proxies_from_db()
+                        total_attempts = 0
+                        continue
+                    
+                    await asyncio.sleep(min(2 ** (total_attempts // 3), 15))
+                    continue
+                
+                if "404" in error_str:
+                    continue
+                
+                raise
+        
+        raise Exception("Все попытки запроса с файлом исчерпаны")
+
 
     async def stream_content(
         self,

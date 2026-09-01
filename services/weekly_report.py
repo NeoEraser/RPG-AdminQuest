@@ -12,6 +12,9 @@ import html
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
+import os
+import tempfile
+from pathlib import Path
 
 import aiosqlite
 
@@ -145,6 +148,7 @@ async def get_client_activity_map(db, week_mon, week_sun):
 # ─────────────────────────── report builder ───────────────────────────
 
 def build_weekly_report(week_mon, week_sun, leaderboard, dashboard, overdue, client_map):
+
     """Формирует Markdown-отчёт."""
     lines = []
 
@@ -212,9 +216,272 @@ def build_weekly_report(week_mon, week_sun, leaderboard, dashboard, overdue, cli
     return "\n".join(lines)
 
 
+def build_weekly_report_html(week_mon, week_sun, leaderboard, dashboard, overdue, client_map) -> str:
+    """Формирует HTML-версию отчёта."""
+    
+    html = f"""
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Недельный отчёт RPG-AdminQuest</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 30px;
+            background: #f8f9fa;
+            color: #2c3e50;
+            line-height: 1.6;
+        }}
+        .container {{
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }}
+        h1 {{
+            font-size: 26px;
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 15px;
+            margin-bottom: 30px;
+        }}
+        h2 {{
+            font-size: 22px;
+            color: #34495e;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .badge {{
+            background: #e9ecef;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: normal;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            font-size: 15px;
+        }}
+        th, td {{
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }}
+        th {{
+            background: #f1f3f5;
+            font-weight: 600;
+            color: #495057;
+        }}
+        tr:hover {{
+            background: #f8f9fa;
+        }}
+        .leaderboard-item {{
+            padding: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid #f1f3f5;
+        }}
+        .leaderboard-item .name {{
+            font-weight: 500;
+        }}
+        .leaderboard-item .exp {{
+            font-weight: 600;
+        }}
+        .exp-positive {{ color: #27ae60; }}
+        .exp-negative {{ color: #e74c3c; }}
+        .task-item {{
+            padding: 6px 0 6px 20px;
+            border-left: 3px solid #3498db;
+            margin: 5px 0;
+            font-size: 14px;
+        }}
+        .task-item .time {{
+            color: #6c757d;
+            font-weight: 500;
+        }}
+        .overdue-item {{
+            padding: 10px 15px;
+            margin: 8px 0;
+            background: #fff5f5;
+            border-left: 4px solid #e74c3c;
+            border-radius: 4px;
+        }}
+        .overdue-item .worker {{
+            font-weight: 600;
+            color: #c0392b;
+        }}
+        .footer {{
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #e9ecef;
+            color: #6c757d;
+            font-size: 13px;
+            text-align: center;
+        }}
+        .empty-state {{
+            color: #6c757d;
+            font-style: italic;
+            padding: 15px 0;
+        }}
+        .worker-group {{
+            margin: 10px 0 15px 0;
+            background: #f8f9fa;
+            padding: 12px 16px;
+            border-radius: 8px;
+        }}
+        .worker-group .worker-name {{
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 16px;
+        }}
+        .worker-group .task-count {{
+            color: #6c757d;
+            font-size: 14px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 НЕДЕЛЬНЫЙ ОТЧЁТ</h1>
+        <p style="font-size: 18px; color: #34495e; margin-bottom: 30px;">
+            {_weekday_name(week_mon)}, {week_mon.strftime('%d.%m')} — {_weekday_name(week_sun)}, {week_sun.strftime('%d.%m.%Y')}
+        </p>
+"""
+
+    # ── Leaderboard ──
+    html += f"""
+        <h2>🏆 ТОП АКТИВНОСТИ <span class="badge">{len(leaderboard)} героев</span></h2>
+"""
+    if leaderboard:
+        html += '<div style="margin: 15px 0;">'
+        for i, (name, before, after, delta) in enumerate(leaderboard[:10], 1):
+            emoji = "📈" if delta > 0 else "📉"
+            color_class = "exp-positive" if delta > 0 else "exp-negative"
+            html += f"""
+            <div class="leaderboard-item">
+                <span class="name">{i}. {emoji} {esc(name)}</span>
+                <span class="exp">{before} → {after} EXP <span class="{color_class}">({delta:+d})</span></span>
+            </div>
+"""
+        if len(leaderboard) > 10:
+            html += f'<div style="color: #6c757d; text-align: center; margin-top: 8px;">... и ещё {len(leaderboard) - 10} участников</div>'
+        html += '</div>'
+    else:
+        html += '<div class="empty-state">Нет активности за неделю.</div>'
+
+    # ── Dashboard ──
+    html += f"""
+        <h2>👥 ДАШБОРД ИНЖЕНЕРОВ</h2>
+"""
+    if dashboard:
+        html += """
+        <table>
+            <thead>
+                <tr>
+                    <th>Имя</th>
+                    <th style="text-align: center;">Квесты</th>
+                    <th style="text-align: center;">Инциденты</th>
+                    <th style="text-align: center;">Штрафы</th>
+                </tr>
+            </thead>
+            <tbody>
+"""
+        for name, quests, incidents, penalties in dashboard:
+            penalty_str = str(penalties) if penalties < 0 else "0"
+            html += f"""
+                <tr>
+                    <td><strong>{esc(name)}</strong></td>
+                    <td style="text-align: center;">{quests}</td>
+                    <td style="text-align: center;">{incidents}</td>
+                    <td style="text-align: center; color: {'#e74c3c' if penalties < 0 else '#27ae60'};">{penalty_str}</td>
+                </tr>
+"""
+        html += """
+            </tbody>
+        </table>
+"""
+    else:
+        html += '<div class="empty-state">Нет завершённых задач за неделю.</div>'
+
+    # ── Просрочки ──
+    html += f"""
+        <h2>⚠️ ПРОСРОЧКИ (вернулись в open)</h2>
+"""
+    if overdue:
+        for tid, desc, worker, start_time in overdue[:10]:
+            dt = datetime.fromisoformat(start_time.replace(' ', '+'))
+            short_desc = esc(desc)[:60] + "..." if len(esc(desc)) > 60 else esc(desc)
+            html += f"""
+            <div class="overdue-item">
+                <div>
+                    <span class="worker">🔴 {esc(worker)}</span>
+                    <span style="color: #6c757d; font-size: 13px;">— Квест #{tid}</span>
+                    <span style="color: #6c757d; font-size: 13px; float: right;">{dt.strftime('%d.%m %H:%M')}</span>
+                </div>
+                <div style="font-size: 14px; margin-top: 4px;">{short_desc}</div>
+            </div>
+"""
+        if len(overdue) > 10:
+            html += f'<div style="color: #6c757d; text-align: center; margin-top: 10px;">... всего: {len(overdue)} просрочек</div>'
+    else:
+        html += '<div class="empty-state">✅ Просрочек нет!</div>'
+
+    # ── Карта клиентов ──
+    html += f"""
+        <h2>📋 ВЫПОЛНЕННЫЕ ЗАДАЧИ <span class="badge">{len(client_map)}</span></h2>
+"""
+    if client_map:
+        by_worker = {}
+        for desc, worker, created in client_map:
+            by_worker.setdefault(worker, []).append((desc, created))
+
+        for worker, tasks in sorted(by_worker.items()):
+            html += f"""
+            <div class="worker-group">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <span class="worker-name">👤 {esc(worker)}</span>
+                    <span class="task-count">{len(tasks)} задач(и)</span>
+                </div>
+"""
+            for desc, created in tasks[:5]:
+                dt = datetime.fromisoformat(created.replace(' ', '+'))
+                short = esc(desc)[:70] + "..." if len(esc(desc)) > 70 else esc(desc)
+                html += f"""
+                <div class="task-item">
+                    <span class="time">{dt.strftime('%d.%m %H:%M')}</span> — {short}
+                </div>
+"""
+            if len(tasks) > 5:
+                html += f'<div style="color: #6c757d; font-size: 13px; padding-left: 20px;">... и ещё {len(tasks) - 5}</div>'
+            html += '</div>'
+    else:
+        html += '<div class="empty-state">Нет завершённых задач за неделю.</div>'
+
+    # ── Footer ──
+    html += f"""
+        <div class="footer">
+            📅 Сгенерировано: {datetime.now().strftime('%d.%m.%Y %H:%M')} &nbsp;|&nbsp; 🤖 RPG-AdminQuest Bot
+        </div>
+    </div>
+</body>
+</html>
+"""
+    return html
+
+
 # ─────────────────────────── main function ───────────────────────────
 
-async def generate_weekly_report(bot=None, chat_id: int = None, ref_date: datetime = None):
+async def generate_weekly_report(bot=None, chat_id: int = None, ref_date: datetime = None, send_html: bool = True, send_txt: bool = True):
     """
     Генерирует и (если bot+chat_id) отправляет еженедельный отчёт.
 
@@ -226,6 +493,11 @@ async def generate_weekly_report(bot=None, chat_id: int = None, ref_date: dateti
     Returns:
         str — текст отчёта.
     """
+
+    # Set default value if None
+    if ref_date is None:
+        ref_date = datetime.now()  # or datetime.utcnow() depending on your needs
+
     week_mon, week_sun = _week_range(ref_date - timedelta(days=7))
 
     logger.info(f"📊 Генерация отчёта за неделю {week_mon.isoformat()} — {week_sun.isoformat()}")
@@ -236,21 +508,67 @@ async def generate_weekly_report(bot=None, chat_id: int = None, ref_date: dateti
         overdue = await get_overdue_analysis(db, week_mon, week_sun)
         client_map = await get_client_activity_map(db, week_mon, week_sun)
 
-    report_text = build_weekly_report(week_mon, week_sun, leaderboard, dashboard, overdue, client_map)
-
+    report_text = None
+    html_content = None
+    
     if bot and chat_id:
-        # Разбиваем если длиннее 4096 символов
-        max_len = 4096
-        if len(report_text) <= max_len:
-            await bot.send_message(chat_id, report_text, parse_mode="HTML")
-        else:
-            parts = [report_text[i:i+max_len] for i in range(0, len(report_text), max_len)]
-            for i, part in enumerate(parts):
-                suffix = f"\n\n*(часть {i+1}/{len(parts)})" if len(parts) > 1 else ""
-                await bot.send_message(chat_id, part + suffix, parse_mode="HTML")
-        logger.info("✅ Отчёт отправлен")
+        # ── Текстовая версия ──
+        if send_txt:
+            report_text = build_weekly_report(week_mon, week_sun, leaderboard, dashboard, overdue, client_map)
+            # Разбиваем если длиннее 4096 символов
+            max_len = 4096
+            if len(report_text) <= max_len:
+                await bot.send_message(chat_id, report_text, parse_mode="HTML")
+            else:
+                parts = [report_text[i:i+max_len] for i in range(0, len(report_text), max_len)]
+                for i, part in enumerate(parts):
+                    suffix = f"\n\n*(часть {i+1}/{len(parts)})" if len(parts) > 1 else ""
+                    await bot.send_message(chat_id, part + suffix, parse_mode="HTML")
+            logger.info("✅ Текстовая версия отправлена")
+        
+        # ── HTML-версия как файл ──
+        if send_html:
+            html_content = build_weekly_report_html(week_mon, week_sun, leaderboard, dashboard, overdue, client_map)
+            try:
+                # Создаём директорию для отчётов, если её нет
+                reports_dir = Path("reports")
+                reports_dir.mkdir(exist_ok=True)
+                
+                # Формируем имя файла с датами
+                file_name = f"weekly_report_{week_mon.strftime('%Y%m%d')}_{week_sun.strftime('%Y%m%d')}.html"
+                file_path = reports_dir / file_name
+                
+                # Сохраняем HTML в файл
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(html_content)
+                
+                logger.info(f"✅ HTML-файл сохранён: {file_path}")
+                
+                # Если есть bot и chat_id, отправляем сообщение о сохранении
+                if bot and chat_id:
+                    await bot.send_message(
+                        chat_id,
+                        f"✅ HTML-версия отчёта сохранена локально:\n<code>{file_path}</code>",
+                        parse_mode="HTML",
+                        disable_notification=True
+                    )
+                    
+            except Exception as e:
+                logger.error(f"❌ Ошибка при сохранении HTML: {e}", exc_info=True)
+                if bot and chat_id:
+                    await bot.send_message(
+                        chat_id,
+                        f"⚠️ Ошибка при сохранении HTML: {e}",
+                        disable_notification=True
+                    )
 
-    return report_text
+    # Если только генерация без отправки
+    if not report_text:
+        report_text = build_weekly_report(week_mon, week_sun, leaderboard, dashboard, overdue, client_map)
+    if not html_content:
+        html_content = build_weekly_report_html(week_mon, week_sun, leaderboard, dashboard, overdue, client_map)
+
+    return report_text, html_content
 
 
 # ─────────────────────────── live dashboard ───────────────────────────
