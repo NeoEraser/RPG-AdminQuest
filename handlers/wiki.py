@@ -307,7 +307,7 @@ async def cmd_wiki_review(message: types.Message):
     lines = ["📝 <b>ОЧЕРЕДЬ НА ПРОВЕРКУ:</b>\n"]
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for (aid, title, content, category, tags, author, likes, created, uses) in articles:
-        short = content[:120].replace('\n', ' ')
+        short = content.replace('\n', ' ')
         lines.append(f"#{aid} 📚 <b>{title}</b> — {short}...")
         # Добавляем кнопки для этой статьи
         kb.inline_keyboard.append([

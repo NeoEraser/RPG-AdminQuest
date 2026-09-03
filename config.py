@@ -13,4 +13,4 @@ PROXY_URL = os.getenv("PROXY_URL")
 # Тот самый ID чата для квестов
 GROUP_ID = int(os.getenv("GROUP_ID", 0)) 
 # Путь к python интерпретатору для отдельного venv с эмбеддингами (если используете отдельный venv)
-EMBEDDING_PYTHON = os.getenv("EMBEDDING_PYTHON", os.path.join(os.getcwd(), "Desktop", "python project", "uralaiti_gamebot_rpg", "embed_venv", "Scripts", "python.exe"))
+EMBEDDING_PYTHON = os.getenv("EMBEDDING_PYTHON", os.path.join(os.getcwd(), "Desktop", "python project", "uralaiti_gamebot_rpg", ".venv", "Scripts", "python.exe"))
