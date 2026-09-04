@@ -1,0 +1,27 @@
+[
+    {
+        "name": "ООО Ромашка",
+        "vip": false,
+        "description": "Клиент-партнёр"
+    },
+    {
+        "name": "Сбер",
+        "vip": true,
+        "description": "VIP-клиент"
+    },
+    {
+        "name": "Газпром",
+        "vip": true,
+        "description": "VIP-клиент"
+    },
+    {
+        "name": "ООО Техносервис",
+        "vip": false,
+        "description": ""
+    },
+    {
+        "name": "ПАО Сбербанк",
+        "vip": true,
+        "description": "VIP-клиент"
+    }
+]

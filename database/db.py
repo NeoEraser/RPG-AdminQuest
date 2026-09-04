@@ -1,8 +1,49 @@
 import aiosqlite
 from config import DB_NAME
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
+        
+        # ─── Таблица компаний (для AI-анализа) ──────────────────
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS companies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                vip INTEGER DEFAULT 0,
+                description TEXT
+            )
+        ''')
+
+        # ─── Таблица метаданных задач ────────────────────────────
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS task_metadata (
+                task_id INTEGER PRIMARY KEY,
+                company TEXT,
+                is_vip INTEGER DEFAULT 0,
+                contact_name TEXT,
+                phone TEXT,
+                address TEXT,
+                priority TEXT DEFAULT 'medium',
+                priority_value INTEGER DEFAULT 0,
+                employee_level INTEGER DEFAULT 0,
+                scope_level INTEGER DEFAULT 0,
+                metadata_json TEXT,
+                FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+            )
+        ''')
+
+        # ─── Индексы ─────────────────────────────────────────────
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(name)')
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_task_metadata_priority ON task_metadata(priority)')
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_task_metadata_company ON task_metadata(company)')
+        
+        
+        
+        
+        
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -543,3 +584,86 @@ async def get_proxy_stats() -> dict:
             stats['max_rating'] = (await cursor.fetchone())[0] or 0
         
         return stats
+
+
+async def save_task_metadata(
+    task_id: int,
+    company: str | None = None,
+    is_vip: bool = False,
+    contact_name: str | None = None,
+    phone: str | None = None,
+    address: str | None = None,
+    priority: str = "medium",
+    priority_value: int = 0,
+    employee_level: int = 0,
+    scope_level: int = 0,
+    metadata_json: str | None = None,
+):
+    """Сохраняет AI-анализ задачи в БД."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('''
+            INSERT OR REPLACE INTO task_metadata (
+                task_id, company, is_vip, contact_name, phone, address,
+                priority, priority_value, employee_level, scope_level, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            task_id, company, int(is_vip), contact_name, phone, address,
+            priority, priority_value, employee_level, scope_level, metadata_json
+        ))
+        await db.commit()
+
+
+async def get_task_metadata(task_id: int) -> dict | None:
+    """Получает метаданные задачи из БД."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT company, is_vip, contact_name, phone, address,
+                   priority, priority_value, employee_level, scope_level, metadata_json
+            FROM task_metadata WHERE task_id = ?
+        ''', (task_id,)) as cursor:
+            row = await cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "company": row[0],
+        "is_vip": bool(row[1]),
+        "contact_name": row[2],
+        "phone": row[3],
+        "address": row[4],
+        "priority": row[5],
+        "priority_value": row[6],
+        "employee_level": row[7],
+        "scope_level": row[8],
+        "metadata_json": row[9],
+    }
+
+
+async def list_tasks_by_company(company_name: str) -> list:
+    """Возвращает список task_id по названию компании."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT task_id, description, status, worker_id
+            FROM tasks
+            WHERE task_id IN (
+                SELECT task_id FROM task_metadata WHERE company = ?
+            )
+            ORDER BY task_id DESC
+        ''', (company_name,)) as cursor:
+            return await cursor.fetchall()
+
+
+async def get_company_stats() -> dict:
+    """Статистика по компаниям: кол-во квестов, средний приоритет."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute('''
+            SELECT company, COUNT(*) as count, AVG(priority_value) as avg_priority
+            FROM task_metadata
+            WHERE company IS NOT NULL
+            GROUP BY company
+            ORDER BY count DESC
+        ''') as cursor:
+            rows = await cursor.fetchall()
+    return [
+        {"company": r[0], "count": r[1], "avg_priority": round(r[2], 1) if r[2] else None}
+        for r in rows
+    ]

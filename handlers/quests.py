@@ -3,14 +3,21 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram import Bot
 import aiosqlite
+import asyncio
 from datetime import datetime, timedelta
-from config import DB_NAME, TEAMLEAD_ID
+from config import DB_NAME, TEAMLEAD_ID, AI_ENABLED, COMPANIES
 from database.db import update_exp, update_activity, save_timeout, remove_timeout, save_quest_message, increment_postponements, update_timeout
 from services.scheduler import scheduler, quest_timeout_check
 from services.api import update_telegram_tag
 from services.rpg import calculate_level, get_tag_title
 from services.category_detector import detect_category, format_category_tag
 from services.wiki import search_wiki
+
+from services.ai_analyzer import analyze_task_with_ai, format_analysis_inline, TaskAnalysis
+from database.db import save_task_metadata
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -122,53 +129,97 @@ def clean_description(text: str) -> str:
 
 @router.message(F.text.lower().contains("новаязадача") | F.text.lower().contains("новыйквест"))
 async def create_task(message: types.Message):
-    # Очищаем описание от команд
     task_text = clean_description(message.text)
-    reward = 5
-    time_hours = 4
-
-    # Определяем категорию автоматически
-    category = detect_category(task_text)
-    category_tag = format_category_tag(category)
 
     if len(task_text) < 15:
         return await message.reply("Описание задачи слишком короткое!")
+
+    # ── AI-анализ (блокирующий, с таймаутом) ──────────────
+    analysis = TaskAnalysis()
+    if AI_ENABLED and COMPANIES:
+        try:
+            analysis = await asyncio.wait_for(
+                analyze_task_with_ai(task_text), timeout=120.0
+            )
+            analysis_inline = format_analysis_inline(analysis)
+        except asyncio.TimeoutError:
+            analysis_inline = ""
+            logger.warning("AI-analyze timed out for task")
+    else:
+        analysis_inline = ""
+
+    # ── Категория ──────────────────────────────────────────
+    category = detect_category(task_text)
+    category_tag = format_category_tag(category)
+
+    # ── Удаление оригинального сообщения ────────────────────
     try:
         await message.delete()
     except:
         pass
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Взять квест", callback_data="take_quest")]])
-    sent_msg = await message.answer(
-        f"📜 <b>НОВЫЙ КВЕСТ</b> {category_tag}\n\n<b>От:</b> {message.from_user.first_name}\n<b>Суть:</b> {task_text}\n\n<b>Награда:</b> +{reward} EXP\n<b>Время:</b> {time_hours} часа",
-        reply_markup=kb
-    )
+    # ── Формируем сообщение ────────────────────────────────
+    parts = []
+    parts.append(f"📜 <b>НОВЫЙ КВЕСТ</b> {category_tag}")
 
-    # Закрепляем сообщение с квестом (тихое закрепление)
-    try:
-        await message.chat.pin_message(
-            message_id=sent_msg.message_id,
-            disable_notification=True  # Закрепление без уведомления
-        )
-    except Exception as e:
-        print(f"Не удалось закрепить сообщение: {e}")
+    if analysis_inline:
+        parts.append(analysis_inline)
 
+    parts.append("")
+    parts.append(f"<b>От:</b> {message.from_user.first_name}")
+    parts.append(f"<b>Суть:</b> {task_text}")
+    parts.append(f"<b>Награда:</b> +5 EXP")
+    parts.append(f"<b>Время:</b> 4 часа")
+
+    text = "\n".join(parts)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚔️ Взять квест", callback_data="take_quest")],
+        [InlineKeyboardButton(text="💡 Подсказка AI", callback_data="ai_suggest")],
+    ])
+
+    sent_msg = await message.answer(text, reply_markup=kb)
+
+    # ── Сохраняем в БД ─────────────────────────────────────
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
             'INSERT INTO tasks (chat_id, bot_msg_id, description, category, reward, time) VALUES (?, ?, ?, ?, ?, ?)',
-            (sent_msg.chat.id, sent_msg.message_id, task_text, category, reward, time_hours)
+            (sent_msg.chat.id, sent_msg.message_id, task_text, category, 5, 4)
         ) as cursor:
             task_id = cursor.lastrowid
         await db.commit()
 
-        # Сохраняем сообщение с созданием квеста
-        await save_quest_message(
+    # ── Сохраняем метаданные ───────────────────────────────
+    if analysis.company or analysis.contact_name or analysis.phone or analysis.address:
+        await save_task_metadata(
             task_id=task_id,
-            user_id=message.from_user.id,
-            user_name=message.from_user.first_name,
-            message_text=f"Создал(а) квест: {task_text}",
-            is_reply_to_quest=True
+            company=analysis.company,
+            is_vip=analysis.is_vip,
+            contact_name=analysis.contact_name,
+            phone=analysis.phone,
+            address=analysis.address,
+            priority=analysis.priority,
+            priority_value=analysis.priority_value,
+            employee_level=analysis.employee_score,
+            scope_level=analysis.scope_score,
+            metadata_json=None,  # можно сохранить JSON если нужно
         )
+
+    # ── Логирование ────────────────────────────────────────
+    logger.info(
+        f"✅ Квест #{task_id} создан: {task_text[:50]}... | "
+        f"Приоритет={analysis.priority} | "
+        f"Компания={analysis.company or '-'}"
+    )
+
+    # ── Сохраняем запись о создании ─────────────────────────
+    await save_quest_message(
+        task_id=task_id,
+        user_id=message.from_user.id,
+        user_name=message.from_user.first_name,
+        message_text=f"Создал(а) квест: {task_text}",
+        is_reply_to_quest=True,
+    )
 
 @router.callback_query(F.data == "take_quest")
 async def process_take_quest(callback: types.CallbackQuery, bot: Bot):
@@ -256,7 +307,7 @@ async def process_take_quest(callback: types.CallbackQuery, bot: Bot):
     ]])
 
     await callback.message.edit_text(
-        f"{callback.message.text}\n\n👣 <b>Взял на себя:</b> {callback.from_user.first_name}\n⏳ Время пошло!\n\nУдачи, герой!", reply_markup=kb
+        f"{callback.message.text}\n\n👣 <b>Взял на себя:</b> {callback.from_user.first_name}\n⏳ Время пошло!\n\nУдачи, герой!", parse_mode="HTML", reply_markup=kb
     )
 
 @router.callback_query(F.data == "postpone_quest")
@@ -628,3 +679,25 @@ async def wiki_input_handler(message: types.Message):
     )
 
 
+@router.callback_query(F.data == "ai_suggest")
+async def callback_ai_suggest(callback: types.CallbackQuery, bot: Bot):
+    """Показывает AI-подсказку по квесту."""
+    msg_id = callback.message.message_id
+
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            'SELECT task_id, description, worker_id, status FROM tasks WHERE bot_msg_id = ?', (msg_id,)
+        ) as cursor:
+            task = await cursor.fetchone()
+
+    if not task:
+        return await callback.answer("❌ Квест не найден", show_alert=True)
+
+    _, description, worker_id, status = task
+    if status != 'open':
+        return await callback.answer("❌ Квест уже занят", show_alert=True)
+
+    # Показываем подсказку
+    from services.ai_suggester import show_suggestion
+    await show_suggestion(bot, callback.message.chat.id, msg_id, description, callback.from_user.id)
+    await callback.answer("Подсказка загружается...", show_alert=False)
