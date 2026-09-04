@@ -49,32 +49,24 @@ def calculate_priority(emp_score: int, scope_score: int) -> tuple[str, int]:
 # ──────────────────────────── Поиск по БД компаний ───────────────────────────
 
 async def search_company(name: str) -> Optional[dict]:
-    """Ищет компанию в COMPANIES по точному или частичному совпадению."""
-    if not COMPANIES:
-        return None
-
     name_lower = name.lower().strip()
     best_match = None
     best_score = 0
 
     for company in COMPANIES:
         comp_name = company["name"].lower()
+        aliases = [a.lower() for a in company.get("aliases", [])]
+        all_names = [comp_name] + aliases  # ищем по имени И по всем алиасам
 
-        if comp_name == name_lower:
-            return company
+        for candidate in all_names:
+            if candidate == name_lower:
+                return company  # точное совпадение — сразу отдаём
 
-        if comp_name in name_lower or name_lower in comp_name:
-            score = len(comp_name)
-            if score > best_score:
-                best_score = score
-                best_match = company
-
-        comp_words = comp_name.split()
-        text_words = name_lower.split()
-        overlap = len(set(comp_words) & set(text_words))
-        if overlap > best_score:
-            best_score = overlap
-            best_match = company
+            if candidate in name_lower or name_lower in candidate:
+                score = len(candidate)  # длинное совпадение = более релевантно
+                if score > best_score:
+                    best_score = score
+                    best_match = company
 
     return best_match
 
@@ -100,6 +92,10 @@ async def analyze_task_with_ai(task_description: str) -> TaskAnalysis:
     ИИ извлекает: компанию, контакт, телефон, локацию,
     уровень сотрудника, охват проблемы, вычисляет приоритет.
     """
+    
+    from config import load_companies
+    load_companies()  # проверит, не менялся ли файл за последние 10 минут
+    
     company_names = "\n".join(c["name"] for c in COMPANIES) if COMPANIES else "(нет компаний)"
     vip_list = "\n".join(c["name"] for c in COMPANIES if c.get("vip")) or "(нет VIP)"
 

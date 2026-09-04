@@ -1,4 +1,5 @@
 import os
+import time
 from dotenv import load_dotenv
 
 # Загружаем переменные из .env
@@ -44,3 +45,30 @@ try:
 except Exception:
     COMPANIES = []
     logging.warning("⚠️ AI-анализ: файл companies.json не найден — анализ компаний отключён")
+
+
+
+_last_load_time = 0
+_last_mod_time = 0
+COMPANIES = []
+
+def load_companies():
+    global COMPANIES, _last_load_time, _last_mod_time
+    current_time = time.time()
+    file_mtime = os.path.getmtime(COMPANIES_FILE)
+    
+    # Если файл не менялся за последние 10 минут — не перечитываем
+    if current_time - _last_load_time < 600 and file_mtime == _last_mod_time:
+        return
+    
+    try:
+        with open(COMPANIES_FILE, "r", encoding="utf-8") as f:
+            COMPANIES = _json.load(f)
+        _last_load_time = current_time
+        _last_mod_time = file_mtime
+        logging.info(f"✅ Компании перезагружены: {len(COMPANIES)} записей")
+    except Exception as e:
+        logging.error(f"❌ Ошибка загрузки компаний: {e}")
+
+# Загружаем при старте
+load_companies()
