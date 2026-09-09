@@ -17,6 +17,10 @@ from services.weekly_report import generate_weekly_report
 from services.custom_session import DynamicProxySession
 from proxy_manager import ProxyManager
 from services.proxy_monitor import ProxyMonitor
+from services.call_handler import CallHandler, call_queue  # <--- ИМПОРТ ОБРАБОТЧИКА ЗВОНКОВ
+
+from handlers.quests import process_system_task
+from datetime import datetime
 
 # Импортируем роутеры
 from handlers import basic, quests, incidents, admin, quest_manager, wiki
@@ -29,7 +33,7 @@ logging.basicConfig(
 # Включаем debug для aiogram
 logging.getLogger('aiogram.dispatcher').setLevel(logging.DEBUG)
 logging.getLogger('aiogram.client').setLevel(logging.DEBUG)
-logging.getLogger('services.custom_session').setLevel(logging.DEBUG)
+logging.getLogger('services.custom_session').setLevel(logging.INFO)
 
 async def check_action_via_proxy(proxy_url: str) -> bool:
     """Проверяет, можно ли через прокси выполнить действие"""
@@ -185,6 +189,47 @@ async def main():
         traceback.print_exc()
         logging.error("Бот не может запуститься. Проверьте прокси.")
         return
+    
+    # --- ИНТЕГРАЦИЯ WEBHOOK (НОВАЯ ЧАСТЬ) ---
+    call_handler = CallHandler(port=5000) # <--- ВОТ ЗДЕСЬ
+    call_handler.start() # <--- ВОТ ЗДЕСЬ
+    # ----------------------------------------
+    
+    # --- ЗАДАЧА СЛУШАНИЯ ОЧЕРЕДИ ЗВОНКОВ ---
+    async def listen_to_calls():
+        while True:
+            if not call_queue.empty():
+                try:
+                    message = call_queue.get_nowait()
+                    await process_system_task(message, bot, GROUP_ID)
+                    # Проверяем тип message
+                    # if isinstance(message, types.Message, bot=bot):
+                    #     # Если это уже объект Message - передаем напрямую
+                    #     await create_task(message)
+                    # elif isinstance(message, str):
+                    #     # Если это строка - создаем объект Message
+                    #     fake_message = types.Message(
+                    #         message_id=0,
+                    #         date=datetime.now(),
+                    #         chat=types.Chat(id=GROUP_ID, type="group"),
+                    #         from_user=types.User(
+                    #             id=bot.id,
+                    #             first_name="Система",
+                    #             is_bot=True
+                    #         ),
+                    #         text=message,
+                    #         bot=bot
+                    #     )
+
+                    #     await create_task(fake_message)
+                    # else:
+                    #     logging.error(f"Неизвестный тип сообщения: {type(message)}")
+                except Exception as e:
+                    logging.error(f"Ошибка отправки звонка: {e}")
+            await asyncio.sleep(0.5) # Проверяем очередь каждые полсекунды
+
+    loop = asyncio.get_running_loop()
+    loop.create_task(listen_to_calls()) # <--- ВОТ ЗДЕСЬ
     
     # 10. Информация о прокси
     working_proxy = await proxy_manager.get_working_proxy()

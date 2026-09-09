@@ -129,7 +129,7 @@ async def analyze_task_with_ai(task_description: str) -> TaskAnalysis:
 
         "ВЕРНИ ТОЛЬКО JSON:\n"
         '{\n  "company": "ООО Ромашка",\n  "is_vip": false,\n  "contact_name": "Мария Петрова",\n'
-        '  "phone": "+7 (999) 123-45-67",\n  "address": "3 этаж, каб. 312",\n'
+        '  "phone": "+7 999 123-45-67",\n  "address": "3 этаж, каб. 312",\n'
         '  "employee_level": 1,\n  "scope_level": -1\n}'
 
         "\n\nНе добавляй Markdown-обёртки, только чистый JSON."
@@ -143,11 +143,20 @@ async def analyze_task_with_ai(task_description: str) -> TaskAnalysis:
         "temperature": 0.3,
         "max_tokens": AI_MAX_TOKENS,
         "stream": False,
+        "return_progress": True,
+        "sse_ping_interval": 1,
+        "reasoning_format": "auto",
+        "chat_template_kwargs": {
+            "enable_thinking": False  # КЛЮЧЕВОЙ ПАРАМЕТР!
+        },
+        "reasoning_control": True,
+        "backend_sampling": False,
+        "timings_per_token": True,
     }
 
     try:
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=60)
+            timeout=aiohttp.ClientTimeout(total=120)
         ) as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:

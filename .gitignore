@@ -4,6 +4,7 @@
 **/*.bak
 
 config/*.json
+recordings/*.*
 
 __pycache__
 __pycache__/

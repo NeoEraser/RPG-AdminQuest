@@ -101,6 +101,7 @@ async def cancel_quest(message: types.Message, bot: Bot):
                 message_id=bot_msg_id,
                 text=f"📜 <b>НОВЫЙ КВЕСТ</b>\n\n<b>Суть:</b> {description}\n\n<b>Награда:</b> +{reward} EXP\n<b>Время:</b> {time_hours} часа\n\n⚠️ <i>Принудительное освобождение от исполнителя</i>",
                 reply_markup=kb,
+                parse_mode="HTML"
             )
         except Exception:
             pass
@@ -178,7 +179,7 @@ async def create_task(message: types.Message):
         [InlineKeyboardButton(text="💡 Подсказка AI", callback_data="ai_suggest")],
     ])
 
-    sent_msg = await message.answer(text, reply_markup=kb)
+    sent_msg = await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
     # ── Сохраняем в БД ─────────────────────────────────────
     async with aiosqlite.connect(DB_NAME) as db:
@@ -217,6 +218,96 @@ async def create_task(message: types.Message):
         task_id=task_id,
         user_id=message.from_user.id,
         user_name=message.from_user.first_name,
+        message_text=f"Создал(а) квест: {task_text}",
+        is_reply_to_quest=True,
+    )
+
+# В quests.py добавьте:
+async def process_system_task(text: str, bot: Bot, chat_id: int):
+    """Обрабатывает системное сообщение как задачу"""
+    task_text = clean_description(text)
+    
+    if len(task_text) < 15:
+        await bot.send_message(chat_id, "Описание задачи слишком короткое!")
+        return
+    
+    # ── AI-анализ ──────────────────────────────────────────
+    analysis = TaskAnalysis()
+    if AI_ENABLED and COMPANIES:
+        try:
+            analysis = await asyncio.wait_for(
+                analyze_task_with_ai(task_text), timeout=120.0
+            )
+            analysis_inline = format_analysis_inline(analysis)
+        except asyncio.TimeoutError:
+            analysis_inline = ""
+            logger.warning("AI-analyze timed out for task")
+    else:
+        analysis_inline = ""
+    
+    # ── Категория ──────────────────────────────────────────
+    category = detect_category(task_text)
+    category_tag = format_category_tag(category)
+    
+    # ── Формируем сообщение ────────────────────────────────
+    parts = []
+    parts.append(f"📜 <b>НОВЫЙ КВЕСТ</b> {category_tag}")
+    
+    if analysis_inline:
+        parts.append(analysis_inline)
+    
+    parts.append("")
+    parts.append(f"<b>От:</b> Система")
+    parts.append(f"<b>Суть:</b> {task_text}")
+    parts.append(f"<b>Награда:</b> +5 EXP")
+    parts.append(f"<b>Время:</b> 4 часа")
+    
+    text = "\n".join(parts)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚔️ Взять квест", callback_data="take_quest")],
+        [InlineKeyboardButton(text="💡 Подсказка AI", callback_data="ai_suggest")],
+    ])
+    
+    sent_msg = await bot.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML")
+    
+    # ── Сохраняем в БД ─────────────────────────────────────
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            'INSERT INTO tasks (chat_id, bot_msg_id, description, category, reward, time) VALUES (?, ?, ?, ?, ?, ?)',
+            (sent_msg.chat.id, sent_msg.message_id, task_text, category, 5, 4)
+        ) as cursor:
+            task_id = cursor.lastrowid
+        await db.commit()
+    
+    # ── Сохраняем метаданные ───────────────────────────────
+    if analysis.company or analysis.contact_name or analysis.phone or analysis.address:
+        await save_task_metadata(
+            task_id=task_id,
+            company=analysis.company,
+            is_vip=analysis.is_vip,
+            contact_name=analysis.contact_name,
+            phone=analysis.phone,
+            address=analysis.address,
+            priority=analysis.priority,
+            priority_value=analysis.priority_value,
+            employee_level=analysis.employee_score,
+            scope_level=analysis.scope_score,
+            metadata_json=None,
+        )
+    
+    # ── Логирование ────────────────────────────────────────
+    logger.info(
+        f"✅ Системный квест #{task_id} создан: {task_text[:50]}... | "
+        f"Приоритет={analysis.priority} | "
+        f"Компания={analysis.company or '-'}"
+    )
+    
+    # ── Сохраняем запись о создании ─────────────────────────
+    await save_quest_message(
+        task_id=task_id,
+        user_id=bot.id,
+        user_name="Система",
         message_text=f"Создал(а) квест: {task_text}",
         is_reply_to_quest=True,
     )
@@ -379,7 +470,8 @@ async def process_postpone_quest(callback: types.CallbackQuery):
         f"{callback.message.text}\n\n✋ <b>Отсрочка активирована:</b> {callback.from_user.first_name}\n⏳ Добавлено 4 часа",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⏸ Отсрочка", callback_data="postpone_quest")
-        ]])
+        ]]),
+        parse_mode="HTML"
     )
 
     await update_activity(user_id)
@@ -445,7 +537,7 @@ async def finish_quest(message: types.Message, bot: Bot):
     except Exception as e:
         print(f"Не удалось открепить сообщение: {e}")
 
-    await reply_msg.edit_text(f"{reply_msg.text}\n\n<b>✅ Квест сдан</b>", reply_markup=None)
+    await reply_msg.edit_text(f"{reply_msg.text}\n\n<b>✅ Квест сдан</b>", reply_markup=None, parse_mode="HTML")
 
     # ── Промпт: сохранить решение в Wiki ──
     kb_wiki = InlineKeyboardMarkup(inline_keyboard=[
@@ -460,7 +552,8 @@ async def finish_quest(message: types.Message, bot: Bot):
         f"Это поможет другим инженерам быстрее решать похожие задачи.\n"
         f"За +5 EXP\n"
         f"Нажмите кнопку — и тимлид получит уведомление.",
-        reply_markup=kb_wiki
+        reply_markup=kb_wiki,
+        parse_mode="HTML"
     )
 
 @router.message(F.text.lower().startswith("план на завтра") | F.text.lower().startswith("планы на завтра"))
@@ -549,7 +642,7 @@ async def transfer_quest(message: types.Message):
     )
 
     # Обновляем исходное сообщение квеста
-    await reply_msg.edit_text(f"{reply_msg.text}\n\n👤 <b>Квест передан:</b> {target_user_name}", reply_markup=None)
+    await reply_msg.edit_text(f"{reply_msg.text}\n\n👤 <b>Квест передан:</b> {target_user_name}", reply_markup=None, parse_mode="HTML")
 
 
 # ─────────────────────────── Wiki save callbacks ───────────────────────────

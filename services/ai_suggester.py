@@ -2,41 +2,66 @@ import asyncio
 import logging
 import aiohttp
 from aiogram.exceptions import TelegramForbiddenError
-from config import AI_BASE_URL, AI_MODEL, AI_TEMPERATURE, AI_MAX_TOKENS, AI_ENABLED
+from config import AI_BASE_URL, AI_MODEL, AI_TEMPERATURE, AI_MAX_TOKENS, AI_ENABLED, TEAMLEAD_ID
 
 logger = logging.getLogger(__name__)
-
+CACHED_SYSTEM_PROMPT = None
 
 async def get_ai_suggestion(task_description: str) -> str:
     """Запрашивает подсказку у ИИ-сервера (llama.cpp OpenAI-compatible API)."""
     if not AI_ENABLED:
         return "🤖 AI-подсказки отключены. Обратитесь к тимлиду."
 
-    prompt = (
-        "Ты опытный IT-администратор. Пользователь взял задачу:\n"
-        f'"{task_description}"\n\n'
-        "Напиши: краткий анализ проблемы, 3-5 шагов решения, 1-2 подводных камня.\n"
-        "Формат:\n"
-        "📋 Анализ: ...\n"
-        "✅ Шаги:\n"
-        "1. ...\n"
-        "2. ...\n"
-        "3. ...\n"
-        "⚠️ Важно: ...\n"
-        "Ответ краткий (до 400 символов), без Markdown."
-    )
+    prompt = f"""
+        Ты опытный IT-администратор с 10+ годами практики.
+        Твоя задача — дать техническую инструкцию по решению проблемы с ПО, сетью, сервером или оборудованием.
+        
+        Правило 1: Если в тексте задачи есть ФИО, телефон, название компании-клиента — игнорируй их как фоновый шум. Они НЕ являются частью технической проблемы.
+        Правило 2: Ты НЕ ищешь людей, НЕ проверяешь номера, НЕ работаешь с базами данных. Ты даёшь команды для командной строки, настройки роутеров или скрипты.
+        Правило 3: Если техническая суть неясна из-за обилия личных данных — переформулируй задачу в общий вид (например: "пользователь не может подключиться к VPN").
+        
+        Давай практические руководства по решению IT-задач. 
+        Посыл информации должен быть прост и понятен начинающему специалисту. 
+        Формат ответа (без Markdown, до 1000 символов):
+        
+        📋 Анализ: [кратко опиши техническую проблему, убрав имена и телефоны]
+        ✅ Шаги:
+        1. [Конкретные действия]
+        2. [Конкретные команды]
+        3. [Проверка результата]
+        ⚠️ Важно:
+        - [Что может пойти не так]
+        - [Как проверить успех]
+        💡 Альтернатива: [если не сработает]
+        Критерии: точность, безопасность, применимость. Команды пиши конкретно.
 
+        Техническая задача (личные данные внутри — проигнорируй): {task_description}
+    """
+
+    messages = [
+            {"role": "user", "content": prompt},
+        ]
+    
     url = f"{AI_BASE_URL}/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
     payload = {
         "model": AI_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "temperature": AI_TEMPERATURE,
         "max_tokens": AI_MAX_TOKENS,
         "stream": False,
+        "return_progress": True,
+        "sse_ping_interval": 1,
+        "reasoning_format": "auto",
+        "chat_template_kwargs": {
+            "enable_thinking": False  # КЛЮЧЕВОЙ ПАРАМЕТР!
+        },
+        "reasoning_control": True,
+        "backend_sampling": False,
+        "timings_per_token": True,
     }
 
-    timeout = aiohttp.ClientTimeout(total=60)
+    timeout = aiohttp.ClientTimeout(total=120)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, json=payload, headers=headers) as resp:
@@ -106,7 +131,7 @@ async def show_suggestion(bot, chat_id, bot_msg_id, task_description, user_id):
         return
 
     # ── 4. Отправка подсказки ─────────────────────────────────
-    formatted = f"🤖 <b>AI-ПОДСКАЗКА</b>\n\n{suggestion}"
+    formatted = f"🤖 <b>AI-ПОДСКАЗКА</b>\n\n<blockquote expandable>{suggestion}</blockquote>"
     await bot.send_message(chat_id, formatted, parse_mode="HTML")
 
 async def web_search_with_ddg(query: str, max_results: int = 3) -> str:
@@ -149,22 +174,33 @@ async def ai_with_web_context(task_description: str) -> str:
         search_results = await web_search_with_ddg(task_description)
         if search_results:
             # Второй запрос к ИИ с контекстом из поиска
-            context_prompt = (
-                "Ты опытный IT-администратор. "
-                "Пользователь взял задачу:\n"
-                f'"{task_description}"\n\n'
-                "Вот что найдено в интернете:\n"
-                f"{search_results}\n\n"
-                "Сформируй ответ: 3-5 шагов решения с учётом найденных данных. "
-                "Формат:\n"
-                "📋 Анализ: ...\n"
-                "✅ Шаги:\n"
-                "1. ...\n"
-                "2. ...\n"
-                "3. ...\n"
-                "⚠️ Важно: ...\n"
-                "Ответ до 400 символов."
-            )
+            context_prompt = (f"""
+                Ты опытный IT-администратор с 10+ годами практики.
+                Твоя задача — дать техническую инструкцию по решению проблемы с ПО, сетью, сервером или оборудованием.
+                
+                Правило 1: Если в тексте задачи есть ФИО, телефон, название компании-клиента — игнорируй их как фоновый шум. Они НЕ являются частью технической проблемы.
+                Правило 2: Ты НЕ ищешь людей, НЕ проверяешь номера, НЕ работаешь с базами данных. Ты даёшь команды для командной строки, настройки роутеров или скрипты.
+                Правило 3: Если техническая суть неясна из-за обилия личных данных — переформулируй задачу в общий вид (например: "пользователь не может подключиться к VPN").
+                
+                Техническая задача (личные данные внутри — проигнорируй): {task_description}
+                
+                Вот что найдено в интернете: {search_results}
+                
+                Давай практические руководства по решению IT-задач. 
+                Посыл информации должен быть прост и понятен начинающему специалисту. 
+                Формат ответа (без Markdown, до 1000 символов):
+                
+                📋 Анализ: [кратко опиши техническую проблему, убрав имена и телефоны]
+                ✅ Шаги:
+                1. [Конкретные действия]
+                2. [Конкретные команды]
+                3. [Проверка результата]
+                ⚠️ Важно:
+                - [Что может пойти не так]
+                - [Как проверить успех]
+                💡 Альтернатива: [если не сработает]
+                Критерии: точность, безопасность, применимость. Команды пиши конкретно.
+            """)
             improved_response = await get_ai_suggestion_with_context(context_prompt)
             if improved_response and not improved_response.startswith("⚠️") and len(improved_response) > 50:
                 return improved_response
@@ -187,7 +223,7 @@ async def get_ai_suggestion_with_context(prompt: str) -> str:
         "stream": False,
     }
 
-    timeout = aiohttp.ClientTimeout(total=20)  # чуть больше для второго запроса
+    timeout = aiohttp.ClientTimeout(total=300)  # чуть больше для второго запроса
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, json=payload, headers=headers) as resp:
