@@ -14,6 +14,7 @@ import requests
 import whisper
 
 from flask import Flask, request
+from services.ai_analyzer import analyze_task_with_ai
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,8 @@ def _load_model():
     global _model
     if _model is None:
         print("[WHISPER] Загрузка модели large-v3-turbo...")
-        _model = whisper.load_model("large-v3-turbo")
+        #_model = whisper.load_model("large-v3-turbo")
+        _model = whisper.load_model("large-v3")
         print("[WHISPER] Модель загружена")
     return _model
 
@@ -130,6 +132,7 @@ def process_call_group(state, immediate=False):
             if recording_path:
                 text = _transcribe_audio(recording_path)
                 if text:
+                    text = analyze_task_with_ai(text)
                     final_msg += f"\n🎤 Расшифровка:\n{text}\n"
                 else:
                     final_msg += f"\n⚠️ Расшифровка не удалась.\n"

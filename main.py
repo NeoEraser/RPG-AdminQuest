@@ -190,6 +190,11 @@ async def main():
         logging.error("Бот не может запуститься. Проверьте прокси.")
         return
     
+    from web_quest import WebQuestHandler
+    web_handler = WebQuestHandler(TOKEN, GROUP_ID, proxy_manager, port=5001)
+    web_handler.start()
+    
+    
     # --- ИНТЕГРАЦИЯ WEBHOOK (НОВАЯ ЧАСТЬ) ---
     call_handler = CallHandler(port=5000) # <--- ВОТ ЗДЕСЬ
     call_handler.start() # <--- ВОТ ЗДЕСЬ
