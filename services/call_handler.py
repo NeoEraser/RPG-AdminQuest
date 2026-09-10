@@ -48,7 +48,7 @@ STAFF = {
 def _load_model():
     global _model
     if _model is None:
-        print("[WHISPER] Загрузка модели large-v3-turbo...")
+        print("[WHISPER] Загрузка модели large-v3...")
         #_model = whisper.load_model("large-v3-turbo")
         _model = whisper.load_model("large-v3")
         print("[WHISPER] Модель загружена")
