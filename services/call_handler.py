@@ -48,9 +48,9 @@ STAFF = {
 def _load_model():
     global _model
     if _model is None:
-        print("[WHISPER] Загрузка модели large-v3...")
-        #_model = whisper.load_model("large-v3-turbo")
-        _model = whisper.load_model("large-v3")
+        print("[WHISPER] Загрузка модели large-v3-turbo...")
+        _model = whisper.load_model("large-v3-turbo")
+        #_model = whisper.load_model("large-v3")
         print("[WHISPER] Модель загружена")
     return _model
 
@@ -132,10 +132,12 @@ def process_call_group(state, immediate=False):
             if recording_path:
                 text = _transcribe_audio(recording_path)
                 if text:
-                    text = analyze_task_with_ai(text)
+                    text = asyncio.run(analyze_task_with_ai(text))
                     final_msg += f"\n🎤 Расшифровка:\n{text}\n"
                 else:
                     final_msg += f"\n⚠️ Расшифровка не удалась.\n"
+            else:
+                final_msg += f"\n⚠️ Получить запись разговора не удалось.\n"
         
         print(f"[GROUP] Итог (Входящий):\n{final_msg}")
         call_queue.put(final_msg)

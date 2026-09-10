@@ -3,17 +3,37 @@
 Flask-сервер на порту 5001, публичная форма без аутентификации.
 Заявка отправляется как сообщение в Telegram-чат (GROUP_ID)
 через call_queue — тот же путь, что у телефонии.
+Защита от спама: honeypot + rate limiting по IP (1 заявка в 5 мин).
 """
 import logging
 import os
 import threading
+import time
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Rate limiting: не чаще 1 заявки в 5 минут с одного IP
+SPAM_WINDOW = 300  # 5 минут
+_spam_tracker = {}
+
+
+def check_spam(ip: str) -> bool:
+    """Возвращает True если спам (нужно заблокировать)."""
+    now = time.time()
+    # Чистим старые записи
+    _spam_tracker = {k: v for k, v in _spam_tracker.items() if now - v < SPAM_WINDOW}
+
+    if ip in _spam_tracker:
+        return True
+
+    _spam_tracker[ip] = now
+    return False
+
+
 # Форматированное сообщение заявки для Telegram
 QUEST_TEMPLATE = """
-📋 <b>НОВАЯ ЗАЯВКА НА КВЕСТ</b>
+📋 <b>НОВАЯ ЗАЯВКА (САЙТ))</b>
 
 👤 <b>Имя:</b> {name}
 📱 <b>Телефон:</b> {phone}
@@ -26,7 +46,6 @@ QUEST_TEMPLATE = """
 
 def format_quest_message(name: str, phone: str, company: str, description: str) -> str:
     """Формирует сообщение для Telegram из данных формы."""
-    from datetime import datetime
     now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
 
     return QUEST_TEMPLATE.format(
@@ -41,40 +60,14 @@ def format_quest_message(name: str, phone: str, company: str, description: str) 
 # Импорт очереди вызовов — тот же call_queue, что и у телефонии
 from services.call_handler import call_queue
 
-# Форматированное сообщение заявки для Telegram
-QUEST_TEMPLATE = """
-📋 <b>НОВАЯ ЗАЯВКА НА КВЕСТ</b>
-
-👤 <b>Имя:</b> {name}
-📱 <b>Телефон:</b> {phone}
-🏢 <b>Компания:</b> {company}
-📝 <b>Проблема:</b> {description}
-
-🕐 <b>Дата:</b> {date}
-"""
-
-
-def format_quest_message(name: str, phone: str, company: str, description: str) -> str:
-    """Формирует сообщение для Telegram из данных формы."""
-    now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-
-    return QUEST_TEMPLATE.format(
-        name=name,
-        phone=phone,
-        company=company,
-        description=description,
-        date=now,
-    ).strip()
-
-
-# Простая HTML-шаблон формы
+# HTML-шаблон формы
 FORM_HTML = """
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Заявка на квест</title>
+    <title>Заявка в IT</title>
     <style>
         * {
             box-sizing: border-box;
@@ -210,12 +203,18 @@ FORM_HTML = """
 <body>
     <div class="container">
         <div id="form-section">
-            <h1>📋 Заявка на квест</h1>
+            <h1>📋 Заявка в IT</h1>
             <p class="subtitle">Заполните форму — мы свяжемся с вами</p>
 
             <div class="error-msg" id="error-msg"></div>
 
             <form id="quest-form">
+                <!-- Honeypot — скрытое поле для защиты от ботов -->
+                <div class="form-group" style="display:none">
+                    <label>Если вы видите это поле — не заполняйте его</label>
+                    <input type="text" id="website-hp" name="website" tabindex="-1" autocomplete="off">
+                </div>
+
                 <div class="form-group">
                     <label>Имя <span class="required">*</span></label>
                     <input type="text" id="name" name="name"
@@ -254,6 +253,10 @@ FORM_HTML = """
     </div>
 
     <script>
+        // Honeypot — заполняем скрытое поле автоматически (боты не умеют)
+        const honeypot = document.getElementById('website-hp');
+        if (honeypot) honeypot.value = 'protected';
+
         const form = document.getElementById('quest-form');
         const errorMsg = document.getElementById('error-msg');
         const submitBtn = document.getElementById('submit-btn');
@@ -274,6 +277,12 @@ FORM_HTML = """
         form.addEventListener('submit', async function(e) {
             e.preventDefault();
             errorMsg.style.display = 'none';
+
+            // Honeypot проверка
+            if (honeypot && honeypot.value !== 'protected') {
+                // Бот заполнил — просто ничего не делаем
+                return;
+            }
 
             const data = {
                 name: document.getElementById('name').value.trim(),
@@ -349,7 +358,15 @@ class WebQuestHandler:
 
         @app.route("/submit", methods=["POST"])
         def submit():
-            data = request.get_json()
+            # --- Honeypot проверка ---
+            honeypot_value = request.form.get('website', '')
+            data = request.get_json(silent=True) or {}
+
+            # Если honeypot поле заполнено — это бот
+            if honeypot_value and honeypot_value != 'protected':
+                # Бот — просто возвращаем success чтобы не спалить защиту
+                return jsonify({"status": "ok"}), 200
+
             if not data:
                 return jsonify({"status": "error", "message": "Нет данных"}), 400
 
@@ -357,6 +374,12 @@ class WebQuestHandler:
             phone = str(data.get("phone", "")).strip()
             company = str(data.get("company", "")).strip()
             description = str(data.get("description", "")).strip()
+
+            # --- Rate limiting по IP ---
+            client_ip = request.remote_addr or "unknown"
+            if check_spam(client_ip):
+                logger.warning(f"⚠️ Rate limit: {client_ip}")
+                return jsonify({"status": "error", "message": "Отправьте заявку через 5 минут"}), 429
 
             # Валидация
             if not name or not phone or not description:
