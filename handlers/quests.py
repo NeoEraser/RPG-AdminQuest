@@ -162,13 +162,14 @@ async def create_task(message: types.Message):
     # ── Формируем сообщение ────────────────────────────────
     parts = []
     parts.append(f"📜 <b>НОВЫЙ КВЕСТ</b> {category_tag}")
+    summary_text = analysis.summary or task_text
 
     if analysis_inline:
         parts.append(analysis_inline)
 
     parts.append("")
     parts.append(f"<b>От:</b> {message.from_user.first_name}")
-    parts.append(f"<b>Суть:</b> {task_text}")
+    parts.append(f"<b>Суть:</b> {summary_text}")
     parts.append(f"<b>Награда:</b> +5 EXP")
     parts.append(f"<b>Время:</b> 4 часа")
 

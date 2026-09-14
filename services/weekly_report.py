@@ -87,9 +87,12 @@ async def get_engineer_dashboard(db, week_mon, week_sun):
             COUNT(CASE WHEN t.reward = 15 THEN 1 END) AS incidents,
             COALESCE(SUM(CASE WHEN eh.exp_change < 0 THEN eh.exp_change END), 0) AS penalties
         FROM users u
-        LEFT JOIN tasks t ON u.user_id = t.worker_id AND t.status = 'completed' AND t.start_time >= ?
+        LEFT JOIN tasks t ON u.user_id = t.worker_id 
+            AND t.status = 'completed' 
+            AND t.start_time >= ?
         LEFT JOIN exp_history eh ON u.user_id = eh.user_id
-            AND eh.change_date >= ? AND eh.reason IN ('timeout', 'rejected', 'no_plan', 'afk', 'smite')
+            AND eh.change_date >= ? AND eh.change_date <= ?
+            AND eh.reason IN ('timeout', 'rejected', 'no_plan', 'afk', 'smite')
         WHERE u.agreed_to_tos = 1
         GROUP BY u.user_id
         HAVING quests + incidents + ABS(COALESCE(penalties, 0)) > 0
@@ -113,6 +116,7 @@ async def get_overdue_analysis(db, week_mon, week_sun):
         JOIN exp_history eh ON t.worker_id = eh.user_id
             AND eh.reason = 'timeout' AND eh.change_date >= ? AND eh.change_date <= ?
         WHERE t.reward = 5
+        ORDER BY eh.change_date DESC
     '''
     async with db.execute(query, (week_mon.isoformat(), week_sun.isoformat())) as cursor:
         rows = await cursor.fetchall()
@@ -481,7 +485,7 @@ def build_weekly_report_html(week_mon, week_sun, leaderboard, dashboard, overdue
 
 # ─────────────────────────── main function ───────────────────────────
 
-async def generate_weekly_report(bot=None, chat_id: int = None, ref_date: datetime = None, send_html: bool = True, send_txt: bool = True):
+async def generate_weekly_report(bot=None, chat_id: int = None, ref_date: datetime = None, send_html: bool = True, send_txt: bool = False):
     """
     Генерирует и (если bot+chat_id) отправляет еженедельный отчёт.
 

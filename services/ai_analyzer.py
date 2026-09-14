@@ -80,6 +80,7 @@ class TaskAnalysis:
     contact_name: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    summary: Optional[str] = None
     employee_score: int = 0
     scope_score: int = 0
     priority: str = "medium"
@@ -108,11 +109,13 @@ async def analyze_task_with_ai(task_description: str) -> TaskAnalysis:
         f"Задача:\n\"{task_description}\"\n\n"
 
         "Извлеки поля JSON:\n"
-        '  "company" — название компании (если найдена в базе — используй точное название)\n'
+        '  "company" — название компании (если найдена в базе — используй точное название, если нет в базе используй None)\n'
         '  "is_vip" — true/false (является ли компания VIP из базы)\n'
         '  "contact_name" — имя контактного лица (если упоминается)\n'
         '  "phone" — номер телефона (если упоминается)\n'
-        '  "address" — адрес/локация (кабинет, этаж, здание)\n\n'
+        '  "address" — адрес/локация (кабинет, этаж, здание)\n'
+        '  "summary" — краткая суть обращения (1–2 предложения, до 200 символов).\n'
+        'Опиши, что случилось и что нужно сделать. Не дублируй телефон и имя — они уже вынесены отдельно.\n\n'
 
         "Кто столкнулся с проблемой (employee_level):\n"
         "  директор / гендиректор / босс / главный          → 3\n"
@@ -130,6 +133,7 @@ async def analyze_task_with_ai(task_description: str) -> TaskAnalysis:
         "ВЕРНИ ТОЛЬКО JSON:\n"
         '{\n  "company": "ООО Ромашка",\n  "is_vip": false,\n  "contact_name": "Мария Петрова",\n'
         '  "phone": "+7 999 123-45-67",\n  "address": "3 этаж, каб. 312",\n'
+        '  "summary": "Не работает 1С: Бухгалтерия, не открывается база. Нужна помощь с восстановлением доступа.",\n'
         '  "employee_level": 1,\n  "scope_level": -1\n}'
 
         "\n\nНе добавляй Markdown-обёртки, только чистый JSON."
@@ -196,6 +200,7 @@ async def analyze_task_with_ai(task_description: str) -> TaskAnalysis:
                     contact_name=parsed.get("contact_name"),
                     phone=parsed.get("phone"),
                     address=parsed.get("address"),
+                    summary=parsed.get("summary", ""),
                     employee_score=emp,
                     scope_score=scope,
                 )

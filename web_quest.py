@@ -22,7 +22,9 @@ def check_spam(ip: str) -> bool:
     """Возвращает True если спам (нужно заблокировать)."""
     now = time.time()
     # Чистим старые записи
-    _spam_tracker = {k: v for k, v in _spam_tracker.items() if now - v < SPAM_WINDOW}
+    to_remove = [k for k, v in _spam_tracker.items() if now - v >= SPAM_WINDOW]
+    for k in to_remove:
+        del _spam_tracker[k]
 
     if ip in _spam_tracker:
         return True
@@ -33,7 +35,7 @@ def check_spam(ip: str) -> bool:
 
 # Форматированное сообщение заявки для Telegram
 QUEST_TEMPLATE = """
-📋 <b>НОВАЯ ЗАЯВКА (САЙТ))</b>
+📋 <b>НОВАЯ ЗАЯВКА НА КВЕСТ</b>
 
 👤 <b>Имя:</b> {name}
 📱 <b>Телефон:</b> {phone}
@@ -67,7 +69,7 @@ FORM_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Заявка в IT</title>
+    <title>Заявка на квест</title>
     <style>
         * {
             box-sizing: border-box;
@@ -203,7 +205,7 @@ FORM_HTML = """
 <body>
     <div class="container">
         <div id="form-section">
-            <h1>📋 Заявка в IT</h1>
+            <h1>📋 Заявка на квест</h1>
             <p class="subtitle">Заполните форму — мы свяжемся с вами</p>
 
             <div class="error-msg" id="error-msg"></div>
