@@ -13,6 +13,8 @@ DB_NAME = str(os.getenv("DB_NAME"))
 PROXY_URL = os.getenv("PROXY_URL")
 # Тот самый ID чата для квестов
 GROUP_ID = int(os.getenv("GROUP_ID", 0)) 
+message_thread_id = int(os.getenv("message_thread_id", 0))
+
 # Путь к python интерпретатору для отдельного venv с эмбеддингами (если используете отдельный venv)
 EMBEDDING_PYTHON = os.getenv(
     "EMBEDDING_PYTHON", 

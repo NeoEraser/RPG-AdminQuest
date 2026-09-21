@@ -191,6 +191,17 @@ async def create_task(message: types.Message):
             task_id = cursor.lastrowid
         await db.commit()
 
+    # ── Закрепляем сообщение ───────────────────────────────
+    try:
+        await bot.pin_chat_message(
+            chat_id=chat_id,
+            message_id=sent_msg.message_id,
+            disable_notification=True,  # не спамить уведомлением
+        )
+    except TelegramBadRequest as e:
+        # Частая причина — бот не админ или нет прав на закрепление
+        logger.warning(f"Не удалось закрепить сообщение: {e}")
+
     # ── Сохраняем метаданные ───────────────────────────────
     if analysis.company or analysis.contact_name or analysis.phone or analysis.address:
         await save_task_metadata(
@@ -224,7 +235,7 @@ async def create_task(message: types.Message):
     )
 
 # В quests.py добавьте:
-async def process_system_task(text: str, bot: Bot, chat_id: int):
+async def process_system_task(text: str, bot: Bot, chat_id: int, message_thread_id: int):
     """Обрабатывает системное сообщение как задачу"""
     task_text = clean_description(text)
     
@@ -270,8 +281,19 @@ async def process_system_task(text: str, bot: Bot, chat_id: int):
         [InlineKeyboardButton(text="💡 Подсказка AI", callback_data="ai_suggest")],
     ])
     
-    sent_msg = await bot.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML")
-    
+    sent_msg = await bot.send_message(chat_id, text, message_thread_id, reply_markup=kb, parse_mode="HTML")
+
+    # ── Закрепляем сообщение ───────────────────────────────
+    try:
+        await bot.pin_chat_message(
+            chat_id=chat_id,
+            message_id=sent_msg.message_id,
+            disable_notification=True,  # не спамить уведомлением
+        )
+    except TelegramBadRequest as e:
+        # Частая причина — бот не админ или нет прав на закрепление
+        logger.warning(f"Не удалось закрепить сообщение: {e}")
+
     # ── Сохраняем в БД ─────────────────────────────────────
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(

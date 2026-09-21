@@ -7,7 +7,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from config import TOKEN, GROUP_ID
+from config import TOKEN, GROUP_ID, message_thread_id
 from database.db import init_db
 from database.db import add_proxies_batch
 from database.wiki import init_wiki_table
@@ -206,7 +206,7 @@ async def main():
             if not call_queue.empty():
                 try:
                     message = call_queue.get_nowait()
-                    await process_system_task(message, bot, GROUP_ID)
+                    await process_system_task(message, bot, GROUP_ID, message_thread_id)
                     # Проверяем тип message
                     # if isinstance(message, types.Message, bot=bot):
                     #     # Если это уже объект Message - передаем напрямую

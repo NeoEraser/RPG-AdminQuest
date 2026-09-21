@@ -48,9 +48,9 @@ STAFF = {
 def _load_model():
     global _model
     if _model is None:
-        print("[WHISPER] Загрузка модели large-v3...")
-        #_model = whisper.load_model("large-v3-turbo")
-        _model = whisper.load_model("large-v3")
+        print("[WHISPER] Загрузка модели large-v3-turbo...")
+        _model = whisper.load_model("large-v3-turbo")
+        #_model = whisper.load_model("large-v3")
         print("[WHISPER] Модель загружена")
     return _model
 
@@ -117,13 +117,8 @@ class CallState:
         self.hangup_timer = None       # <-- НОВОЕ: таймер пропущенного
 
 def process_call_group(state, immediate=False):
-    """
-    Формирует итоговое сообщение.
-    immediate=True -> отправляем сразу, не дожидаясь всех Hangup.
-    """
     print(f"!!! >>> PROCESS_CALL_GROUP START: {state.linkedid} (immediate={immediate}) <<< !!!")
     
-    # Отменяем все таймеры, если они ещё живы
     if state.timer:
         try:
             state.timer.cancel()
@@ -137,7 +132,6 @@ def process_call_group(state, immediate=False):
             pass
         state.hangup_timer = None
 
-    # Защита от повторного вызова
     if state.is_finalized:
         print(f"DEBUG: process_call_group skipped — already finalized.")
         return
@@ -145,47 +139,57 @@ def process_call_group(state, immediate=False):
     state.is_finalized = True
     
     if state.answered_user:        
+        # Пытаемся получить запись
+        recording_path = None
         if state.recording and state.service_id:
-            final_msg = f"📞 **ВХОДЯЩИЙ** от {state.caller_number}\n"
-            final_msg += f"✅ Ответил: {state.answered_user}\n"
-            
             recording_path = _download_recording(state.recording, state.service_id)
-            if recording_path:
-                text = _transcribe_audio(recording_path)
-                if text:
-                    analysis = asyncio.run(analyze_task_with_ai(text))
-                    if analysis.summary:
-                        final_msg += f"\n📝 <b>Выжимка из разговора:</b>\n{analysis.summary}\n"
-                    elif analysis.company or analysis.address:
-                        # Если summary нет, показываем старое форматирование
-                        lines = []
-                        if analysis.company:
-                            vip_tag = " ⭐VIP" if analysis.is_vip else ""
-                            lines.append(f"🏢 Компания: <b>{analysis.company}</b>{vip_tag}")
-                        if analysis.address:
-                            lines.append(f"📍 Локация: {analysis.address}")
-                        em = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
-                        lines.append(f"{em.get(analysis.priority, '🟡')} Приоритет: <b>{analysis.priority.upper()}</b>")
-                        final_msg += f"\n📋 <b>АНАЛИЗ ЗАДАЧИ</b>\n" + "\n".join(lines) + "\n"
-                    else:
-                        final_msg += f"\n🎤 Расшифровка: {text[:300]}\n"
-                else:
-                    final_msg += f"\n⚠️ Расшифровка не удалась.\n"
+        
+        # Если записи нет — НЕ отправляем сообщение вообще
+        if not recording_path:
+            print(f"!!! >>> RECORDING NOT AVAILABLE, SKIPPING MESSAGE: {state.recording} <<< !!!")
+            # Тихо завершаем, сообщение не отправляем
+            def cleanup():
+                if state.linkedid in _active_calls:
+                    del _active_calls[state.linkedid]
+                    print(f"!!! >>> CLEANUP STATE (no recording): {state.linkedid} <<< !!!")
+            threading.Timer(5.0, cleanup).start()
+            return
+        
+        # Запись есть — формируем сообщение
+        final_msg = f"📞 **ВХОДЯЩИЙ** от {state.caller_number}\n"
+        final_msg += f"✅ Ответил: {state.answered_user}\n"
+        
+        text = _transcribe_audio(recording_path)
+        if text:
+            analysis = asyncio.run(analyze_task_with_ai(text))
+            if analysis.summary:
+                final_msg += f"\n📝 <b>Выжимка из разговора:</b>\n{analysis.summary}\n"
+            elif analysis.company or analysis.address:
+                lines = []
+                if analysis.company:
+                    vip_tag = " ⭐VIP" if analysis.is_vip else ""
+                    lines.append(f"🏢 Компания: <b>{analysis.company}</b>{vip_tag}")
+                if analysis.address:
+                    lines.append(f"📍 Локация: {analysis.address}")
+                em = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
+                lines.append(f"{em.get(analysis.priority, '🟡')} Приоритет: <b>{analysis.priority.upper()}</b>")
+                final_msg += f"\n📋 <b>АНАЛИЗ ЗАДАЧИ</b>\n" + "\n".join(lines) + "\n"
             else:
-                final_msg += f"\n⚠️ Получить запись разговора не удалось.\n"
+                final_msg += f"\n🎤 Расшифровка: {text[:300]}\n"
+        else:
+            # Расшифровка не удалась, но запись есть — можно отправить без текста
+            final_msg += f"\n⚠️ Расшифровка не удалась.\n"
         
         print(f"[GROUP] Итог (Входящий):\n{final_msg}")
         call_queue.put(final_msg)
 
     else:
-        # Никто не ответил
+        # Никто не ответил — пропущенный
         if state.caller_number:
             final_msg = f"📞 **ПРОПУЩЕННЫЙ** от {state.caller_number}\n"
             print(f"[GROUP] Итог (Пропущенный):\n{final_msg}")
             call_queue.put(final_msg)
     
-    # Вместо немедленного удаления, ставим таймер очистки на 5 секунд.
-    # Это нужно, чтобы дождаться всех "хвостовых" Hangup и не создать дубликат состояния.
     def cleanup():
         if state.linkedid in _active_calls:
             del _active_calls[state.linkedid]
@@ -254,30 +258,38 @@ def handle_call_event(event_type, data):
         else:
             state.answered_user = src_name 
         
-        state.answered = True   # <-- НОВОЕ
+        state.answered = True
 
         print(f"DEBUG: Answer detected! User: {state.answered_user}, Rec: {state.recording}")
         
-        # Отменяем оба таймера, если они были
-        if state.timer:
-            print("DEBUG: Cancelling timer.")
-            state.timer.cancel()
-            state.timer = None
+        # Отменяем таймер пропущенного (звонок взят)
         if state.hangup_timer:
             print("DEBUG: Cancelling hangup timer.")
             state.hangup_timer.cancel()
             state.hangup_timer = None
 
-        process_call_group(state, immediate=True)
+        # НЕ финализируем здесь — ждём Hangup, чтобы получить запись
+        # Но ставим страховочный таймер на случай, если Hangup не придёт
+        if state.timer:
+            state.timer.cancel()
+        state.timer = threading.Timer(120.0, process_call_group, args=[state])
+        state.timer.start()
         return
 
     # 6. Конец звонка
     if event_type == 'Hangup':
         print(f"DEBUG: Hangup detected.")
         
-        # Если уже знаем, что ответили — звонок уже обработан, игнорируем
+        # Если уже знаем, что ответили — финализируем (запись уже должна быть готова)
         if state.answered:
-            print(f"DEBUG: Already answered, ignoring Hangup.")
+            print(f"DEBUG: Answered call hangup, finalizing.")
+            if state.timer:
+                state.timer.cancel()
+                state.timer = None
+            if state.hangup_timer:
+                state.hangup_timer.cancel()
+                state.hangup_timer = None
+            process_call_group(state, immediate=True)
             return
 
         # === ПРОВЕРКА ЗАПИСИ В Hangup ===
@@ -294,13 +306,13 @@ def handle_call_event(event_type, data):
                 state.answered_user = STAFF[str(hangup_src)]
             elif hangup_src_name:
                 state.answered_user = hangup_src_name
-            elif hangup_rec:
+            else:
                 state.answered_user = "Система (неизвестно)"
 
-            state.answered = True   # <-- НОВОЕ
+            state.answered = True
 
         if state.answered:
-            print(f"DEBUG: Someone answered. Cancelling timer if any.")
+            print(f"DEBUG: Someone answered. Finalizing.")
             if state.timer:
                 state.timer.cancel()
                 state.timer = None
@@ -310,9 +322,7 @@ def handle_call_event(event_type, data):
             process_call_group(state, immediate=True)
             return
         
-        # Если ответа всё ещё нет — перезапускаем таймер пропущенного.
-        # Каждый новый Hangup по каналам группы откладывает финализацию,
-        # пока не наступит 15 секунд тишины.
+        # Пропущенный — таймер 15 сек тишины
         if state.hangup_timer:
             print(f"DEBUG: Restarting hangup timer (15s).")
             state.hangup_timer.cancel()
