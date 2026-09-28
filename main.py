@@ -5,9 +5,10 @@ import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 
-from config import TOKEN, GROUP_ID, message_thread_id
+from config import TOKEN, GROUP_ID, message_thread_id, PROXY_URL
 from database.db import init_db
 from database.db import add_proxies_batch
 from database.wiki import init_wiki_table

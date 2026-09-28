@@ -1,6 +1,7 @@
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramBadRequest
 from aiogram import Bot
 import aiosqlite
 import asyncio
@@ -129,7 +130,7 @@ def clean_description(text: str) -> str:
     return " ".join(text.split())
 
 @router.message(F.text.lower().contains("новаязадача") | F.text.lower().contains("новыйквест"))
-async def create_task(message: types.Message):
+async def create_task(message: types.Message, bot: Bot):
     task_text = clean_description(message.text)
 
     if len(task_text) < 15:
@@ -194,7 +195,7 @@ async def create_task(message: types.Message):
     # ── Закрепляем сообщение ───────────────────────────────
     try:
         await bot.pin_chat_message(
-            chat_id=chat_id,
+            chat_id=sent_msg.chat.id,
             message_id=sent_msg.message_id,
             disable_notification=True,  # не спамить уведомлением
         )
