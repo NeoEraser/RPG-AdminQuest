@@ -14,36 +14,50 @@ class BotAPIMethods:
         self.base_url = f"https://api.telegram.org/bot{bot.token}"
     
     async def set_chat_member_tag(self, chat_id: int, user_id: int, tag: str) -> bool:
+        url = f"{self.base_url}/setChatMemberTag"
+        payload = {"chat_id": chat_id, "user_id": user_id, "tag": tag}
+
+        # Получаем актуальный прокси из менеджера
+        proxy = None
+        if self.proxy_manager:
+            try:
+                proxy = await self.proxy_manager.get_working_proxy()
+            except Exception as e:
+                logger.warning(f"Не удалось получить прокси: {e}")
+                proxy = None
+
+        # Если у бота кастомная сессия — используем её внутреннюю aiohttp-сессию
+        bot_session = getattr(self.bot.session, "_session", None)
+
         try:
-            url = f"{self.base_url}/setChatMemberTag"
-            payload = {"chat_id": chat_id, "user_id": user_id, "tag": tag}
-        
-            # Получаем сессию из бота
-            session = self.bot.session
-            if session and hasattr(session, '_session'):
-                async with session._session.post(url, json=payload) as response:
-                    result = await response.json()
-                    if result.get("ok"):
-                        return True
-                    else:
-                        raise TelegramAPIError(
-                            method="setChatMemberTag", 
-                            message=result.get("description", "Unknown error")
-                        )
-            else:
-                # Fallback на aiohttp напрямую
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload) as response:
+            if bot_session and not bot_session.closed:
+                if proxy:
+                    async with bot_session.post(url, json=payload, proxy=proxy) as response:
                         result = await response.json()
-                        if result.get("ok"):
-                            return True
-                        else:
-                            raise TelegramAPIError(
-                                method="setChatMemberTag", 
-                                message=result.get("description", "Unknown error")
-                            )
+                else:
+                    async with bot_session.post(url, json=payload) as response:
+                        result = await response.json()
+            else:
+                # Fallback: своя сессия
+                async with aiohttp.ClientSession() as session:
+                    if proxy:
+                        async with session.post(url, json=payload, proxy=proxy) as response:
+                            result = await response.json()
+                    else:
+                        async with session.post(url, json=payload) as response:
+                            result = await response.json()
+
+            if result.get("ok"):
+                return True
+            raise TelegramAPIError(
+                method="setChatMemberTag",
+                message=result.get("description", "Unknown error"),
+            )
+        except TelegramAPIError:
+            raise
         except Exception as e:
             logger.error(f"Ошибка установки тега: {e}")
+            return False
 
 
 # Глобальная переменная

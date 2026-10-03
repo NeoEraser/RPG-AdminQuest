@@ -503,7 +503,7 @@ async def get_proxy_for_check() -> list:
 async def update_proxy_rating(proxy_url: str, is_working: bool, error: str = None):
     """Обновляет рейтинг прокси после проверки"""
     try:
-        async with aiosqlite.connect(DB_NAME) as db:
+        async with aiosqlite.connect(DB_NAME, timeout=30.0) as db:
             # Получаем текущий рейтинг
             async with db.execute('SELECT rating FROM proxies WHERE proxy_url = ?', (proxy_url,)) as cursor:
                 row = await cursor.fetchone()
