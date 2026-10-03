@@ -9,3 +9,4 @@ openai-whisper
 pyannote.audio
 soundfile
 numpy
+flask
