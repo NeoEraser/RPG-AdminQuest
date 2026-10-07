@@ -3,7 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 import aiosqlite
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from config import DB_NAME
 from database.db import get_all_quests_with_stats, get_quest_messages, get_task_by_id, get_quests_by_worker, get_all_workers
 
@@ -12,6 +12,8 @@ router = Router()
 # Словарь для временного хранения страниц пагинации
 user_pages = {}
 
+# Часовой пояс +6 (фиксированное смещение)
+TZ_PLUS6 = timezone(timedelta(hours=6))
 
 @router.message(Command("quests_list"))
 async def list_all_quests(message: types.Message):
@@ -118,7 +120,7 @@ async def show_quests_page(message: types.Message, quests: list, page: int):
         emoji = status_emoji.get(status, '⚪')
         status_text = status_names.get(status, status)
         
-        short_desc = description[:40] + "..." if len(description) > 40 else description
+        short_desc = description[:100] + "..." if len(description) > 100 else description
         
         if start_time:
             dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S.%f")
@@ -189,77 +191,90 @@ async def handle_quests_page(callback: types.CallbackQuery):
     await show_quests_page(callback.message, quests, page)
     await callback.answer()
 
+def format_local_time(value: str, fmt: str = "%d.%m.%Y %H:%M") -> str:
+    """
+    Преобразует строку времени из SQLite (UTC) в часовой пояс +6.
+    Если строка пустая или некорректная — возвращает пустую строку.
+    """
+    if not value:
+        return ""
+    try:
+        # SQLite хранит время как 'YYYY-MM-DD HH:MM:SS' (UTC)
+        dt_utc = datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return value  # если формат другой — вернём как есть
+    return dt_utc.astimezone(TZ_PLUS6).strftime(fmt)
 
 @router.callback_query(F.data.startswith("view_quest_"))
 async def view_quest_details(callback: types.CallbackQuery):
     """Показывает детали квеста и всю переписку"""
     task_id = int(callback.data.split("_")[-1])
-    
+
     # Получаем информацию о квесте
     task = await get_task_by_id(task_id)
     if not task:
         await callback.answer("Квест не найден!", show_alert=True)
         return
-    
+
     # Получаем все сообщения по квесту
     messages = await get_quest_messages(task_id)
-    
+
     # Формируем текст с информацией о квесте
-    (task_id, chat_id, bot_msg_id, description, worker_id, reward, 
+    (task_id, chat_id, bot_msg_id, description, worker_id, reward,
      time_hours, status, start_time, worker_name) = task[:10]
-    
+
     status_emoji = {
         'open': '🟢',
         'in_progress': '🟡',
         'completed': '✅'
     }.get(status, '⚪')
-    
+
     status_names = {
         'open': 'Доступен',
         'in_progress': 'В работе',
         'completed': 'Завершен'
     }.get(status, status)
-    
+
     # Ссылка на сообщение с квестом
     quest_link = f"https://t.me/c/{abs(int(str(chat_id)[2:]))}/52/{bot_msg_id}" if chat_id and bot_msg_id else "Нет ссылки"
-    
+
     text = f"📋 <b>ДЕТАЛИ КВЕСТА #{task_id}</b>\n\n"
     text += f"{status_emoji} <b>Статус:</b> {status_names}\n"
     text += f"📝 <b>Описание:</b>\n<code>{description}</code>\n\n"
     text += f"💰 <b>Награда:</b> +{reward} EXP\n"
     text += f"⏱ <b>Время на выполнение:</b> {time_hours} часа\n"
-    
+
     if start_time:
         start_time_str = datetime.fromisoformat(start_time.replace(' ', '+')).strftime("%d.%m.%Y %H:%M")
         text += f"🕐 <b>Время старта:</b> {start_time_str}\n"
-    
+
     if worker_name:
         text += f"👤 <b>Исполнитель:</b> {worker_name}\n"
-    
+
     text += f"🔗 <b>Ссылка на квест:</b> <a href='{quest_link}'>Перейти</a>\n\n"
-    
+
     if messages:
         text += f"💬 <b>ПЕРЕПИСКА ПО КВЕСТУ</b> ({len(messages)} сообщ.)\n"
         text += "─" * 30 + "\n"
-        
+
         # Показываем последние 20 сообщений
         for msg in messages[-20:]:
             msg_id, user_id, user_name, msg_text, created_at, is_reply = msg
-            created_time = datetime.fromisoformat(created_at.replace(' ', '+')).strftime("%d.%m %H:%M")
+            created_time = format_local_time(created_at, "%d.%m %H:%M")
             prefix = "📌" if is_reply else "💬"
             text += f"{prefix} <b>{user_name}</b> [{created_time}]:\n   {msg_text[:100]}\n\n"
-        
+
         if len(messages) > 20:
             text += f"<i>... и еще {len(messages) - 20} сообщений</i>\n"
     else:
         text += "💬 <b>Переписка по квесту отсутствует.</b>"
-    
+
     # Клавиатура для действий
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔗 Открыть квест в Telegram", url=quest_link)],
         [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="back_to_quests_list")]
     ])
-    
+
     await callback.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
     await callback.answer()
 

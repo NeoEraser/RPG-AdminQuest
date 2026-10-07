@@ -343,9 +343,9 @@ async def process_take_quest(callback: types.CallbackQuery, bot: Bot):
         async with db.execute('SELECT exp, agreed_to_tos FROM users WHERE user_id = ?', (callback.from_user.id,)) as cursor:
                 row = await cursor.fetchone()
     if not row:
-        return await callback.reply("Сначала напиши /start")
+        return await callback.answer("Сначала напиши /start", show_alert=True)
     if row[1] == 0:
-        return await callback.reply("Сначала согласись с условиями через /start")
+        return await callback.answer("Сначала согласись с условиями через /start", show_alert=True)
 
     user_id = callback.from_user.id
     msg_id = callback.message.message_id

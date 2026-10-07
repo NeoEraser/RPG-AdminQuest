@@ -7,6 +7,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
+from aiogram.types import ErrorEvent
 
 from config import TOKEN, GROUP_ID, message_thread_id, PROXY_URL
 from database.db import init_db
@@ -32,8 +33,8 @@ logging.basicConfig(
 )
 
 # Включаем debug для aiogram
-logging.getLogger('aiogram.dispatcher').setLevel(logging.DEBUG)
-logging.getLogger('aiogram.client').setLevel(logging.DEBUG)
+logging.getLogger('aiogram.dispatcher').setLevel(logging.INFO)
+logging.getLogger('aiogram.client').setLevel(logging.INFO)
 logging.getLogger('services.custom_session').setLevel(logging.INFO)
 
 async def check_action_via_proxy(proxy_url: str) -> bool:
@@ -170,6 +171,7 @@ async def main():
     scheduler.add_job(reset_monthly_exp, 'cron', day=1, hour=0, minute=0, args=[bot])
     scheduler.add_job(monthly_results_check, 'cron', day='last', hour=12, minute=0, args=[bot, GROUP_ID])
     scheduler.add_job(generate_weekly_report, 'cron', day_of_week='mon', hour=9, minute=30, args=[bot, GROUP_ID])
+
     # Переиндексация Wiki раз в сутки в 01:00 — запускает асинхронную функцию reindex_all
     try:
         # Запланировать запуск внешнего скрипта переиндексации в отдельном venv
@@ -208,28 +210,7 @@ async def main():
                 try:
                     message = call_queue.get_nowait()
                     await process_system_task(message, bot, GROUP_ID, message_thread_id)
-                    # Проверяем тип message
-                    # if isinstance(message, types.Message, bot=bot):
-                    #     # Если это уже объект Message - передаем напрямую
-                    #     await create_task(message)
-                    # elif isinstance(message, str):
-                    #     # Если это строка - создаем объект Message
-                    #     fake_message = types.Message(
-                    #         message_id=0,
-                    #         date=datetime.now(),
-                    #         chat=types.Chat(id=GROUP_ID, type="group"),
-                    #         from_user=types.User(
-                    #             id=bot.id,
-                    #             first_name="Система",
-                    #             is_bot=True
-                    #         ),
-                    #         text=message,
-                    #         bot=bot
-                    #     )
 
-                    #     await create_task(fake_message)
-                    # else:
-                    #     logging.error(f"Неизвестный тип сообщения: {type(message)}")
                 except Exception as e:
                     logging.error(f"Ошибка отправки звонка: {e}")
             await asyncio.sleep(0.5) # Проверяем очередь каждые полсекунды
@@ -254,20 +235,40 @@ async def main():
     
     # 13. Обработчик ошибок
     @dp.errors()
-    async def handle_errors(update, exception):
-        logging.error(f"❌ Ошибка обработки обновления: {exception}")
-        logging.error(f"Тип ошибки: {type(exception)}")
-        if update:
-            logging.error(f"Обновление: {update}")
+    async def handle_errors(event: ErrorEvent):
+        exc = event.exception
+        upd = event.update
+
+        logging.error(f"❌ Ошибка: {type(exc).__name__}: {exc}")
+
+        # Компактная выжимка по апдейту
+        if upd.message:
+            m = upd.message
+            logging.error(
+                f"   update_id={upd.update_id} "
+                f"chat={m.chat.id} thread={m.message_thread_id} "
+                f"user={m.from_user.id if m.from_user else None} "
+                f"text={m.text[:120] if m.text else None!r}"
+            )
+        elif upd.callback_query:
+            cb = upd.callback_query
+            logging.error(
+                f"   update_id={upd.update_id} callback={cb.data!r} "
+                f"user={cb.from_user.id}"
+            )
+        else:
+            logging.error(f"   update_id={upd.update_id} type={type(upd).__name__}")
+
+        # Явный трейсбек исключения
         import traceback
-        traceback.print_exc()
-        return True  # Подавляем ошибку
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+
+        return True
     
     # 14. Логирование обновлений
     @dp.update()
-    async def log_update(update):
+    async def log_update(update: types.Update):
         logging.info(f"📨 Получено обновление: {update}")
-        return update
     
     # 15. Запускаем поллинг
     try:

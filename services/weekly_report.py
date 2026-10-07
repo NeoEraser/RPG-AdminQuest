@@ -98,7 +98,7 @@ async def get_engineer_dashboard(db, week_mon, week_sun):
         HAVING quests + incidents + ABS(COALESCE(penalties, 0)) > 0
         ORDER BY quests + incidents DESC
     '''
-    async with db.execute(query, (week_mon.isoformat(), week_mon.isoformat())) as cursor:
+    async with db.execute(query, (week_mon.isoformat(), week_mon.isoformat(), week_sun.isoformat())) as cursor:
         return await cursor.fetchall()
 
 

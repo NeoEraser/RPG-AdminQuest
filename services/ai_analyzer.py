@@ -149,15 +149,14 @@ async def analyze_task_with_ai(task_description: str) -> TaskAnalysis:
         "temperature": 0.3,
         "max_tokens": AI_MAX_TOKENS,
         "stream": False,
-        "return_progress": True,
-        "sse_ping_interval": 1,
         "reasoning_format": "auto",
+        "reasoning_budget": 1024,          # ограничить thinking 1024 токенами
+        "reasoning_loop_guard": "force-close", # защита от зацикливания
         "chat_template_kwargs": {
-            "enable_thinking": False  # КЛЮЧЕВОЙ ПАРАМЕТР!
+            "enable_thinking": True  # КЛЮЧЕВОЙ ПАРАМЕТР!
         },
         "reasoning_control": True,
         "backend_sampling": False,
-        "timings_per_token": True,
     }
 
     try:

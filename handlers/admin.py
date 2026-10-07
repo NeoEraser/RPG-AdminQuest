@@ -15,12 +15,33 @@ router = Router()
 async def divine_smite(message: types.Message):
     try:
         parts = message.text.split(maxsplit=3)
-        target_id, penalty = int(parts[1]), int(parts[2])
+        target_nickname = parts[1].lstrip("@").strip()
+        penalty = int(parts[2])
         reason = parts[3] if len(parts) > 3 else "Неисповедимы пути Тимлида."
-        await update_exp(target_id, -penalty, reason="smite")
-        await message.answer(f"⚡️ <b>ГНЕВ ТИМЛИДА</b> ⚡️\nГерой <code>{target_id}</code> оштрафован: <b>-{penalty} EXP</b>\n<b>Причина:</b> <i>{reason}</i>")
+
+        # Ищем пользователя в БД по username
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute('SELECT user_id, name FROM users WHERE LOWER(username) = LOWER(?)', (target_nickname,)) as cursor:
+                result = await cursor.fetchone()
+
+        if not result:
+            return await message.answer(f"❌ Игрок <b>@{target_nickname}</b> не найден в системе.\n\nУбедитесь, что он вызвал /profile хотя бы один раз.")
+
+        target_id, target_name = result
+
+        if penalty > 0:
+            # Штраф — гнев тимлида
+            await update_exp(target_id, -penalty, reason="smite")
+            await message.answer(f"⚡️ <b>ГНЕВ ТИМЛИДА</b> ⚡️\nГерой <b>{target_name}</b> (<code>{target_id}</code>) оштрафован: <b>-{penalty} EXP</b>\n<b>Причина:</b> <i>{reason}</i>")
+        elif penalty < 0:
+            # Поощрение — милость тимлида
+            reward = abs(penalty)
+            await update_exp(target_id, reward, reason="smite_reward")
+            await message.answer(f"🕊️ <b>МИЛОСТЬ ТИМЛИДА</b> 🕊️\nГерой <b>{target_name}</b> (<code>{target_id}</code>) вознаграждён: <b>+{reward} EXP</b>\n<b>Причина:</b> <i>{reason}</i>")
+        else:
+            return await message.answer("⚠️ Число должно быть отличным от нуля.\nПоложительное — штраф, отрицательное — поощрение.")
     except:
-        await message.answer("Формат: /smite ID 20 Уронил прод")
+        await message.answer(f"Формат: /smite @ник 20 Уронил прод\nИли: /smite @ник -20 За отличный квест")
 
 
 @router.message(Command("vacation"), F.from_user.id == TEAMLEAD_ID)
